@@ -6,9 +6,11 @@ from simple_log_factory.log_factory import log_factory
 _logger = log_factory("Check File Stability", unique_handler_types=True)
 
 def check_is_file_stable(filename):
-    delay_between_checks = 0.15
+    # by default, we wait 3 minutes for the file to become stable, checking every 6 seconds
+    max_time_to_wait_in_seconds = 3 * 60
+    max_stable_checks = 30
+    delay_between_checks = max_time_to_wait_in_seconds / max_stable_checks
     stable_checks_required = 3
-    max_stable_checks = 10
 
     try:
         if not os.path.exists(filename):
