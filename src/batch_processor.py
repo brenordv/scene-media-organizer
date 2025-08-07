@@ -22,12 +22,13 @@ if _series_base_folder is None or _movies_base_folder is None:
 
 
 def batch_processor():
+    current_batch_id = None
     while True:
         _logger.debug("Checking if we have a batch to work with...")
-        batch = _work_queue_manager.get_next_batch()
+        batch, current_batch_id = _work_queue_manager.get_next_batch(batch_id=current_batch_id)
 
         if batch is not None and len(batch) > 0:
-            _process_batch(batch)
+            _process_batch(batch, current_batch_id)
 
         else:
             _logger.debug("No batch to work with. Let's keep waiting...")
@@ -35,10 +36,11 @@ def batch_processor():
         time.sleep(10)
 
 
-def _process_batch(batch):
-    _logger.debug(f"Processing batch of {len(batch)} items...")
+def _process_batch(batch, current_batch_id):
+    _logger.debug(f"Processing batch of {len(batch)} items. Batch id: {current_batch_id}...")
     try_again = []
 
+    # First try.
     for item in batch:
         try:
             file_to_retry = _process_batch_item(item)
@@ -53,6 +55,7 @@ def _process_batch(batch):
     if len(try_again) > 0:
         _logger.debug(f"Retrying to process {len(try_again)} items...")
 
+    # Retry.
     for item in try_again:
         try:
             _process_batch_item(item)
@@ -60,6 +63,8 @@ def _process_batch(batch):
             _logger.error(f"Error retrying to process item [{item['id']}]: {str(e)}")
             item['status'] = 'FAILED_PROCESSING_RETRY'
             _work_queue_manager.update(item)
+
+    _work_queue_manager.set_batch_as_done(current_batch_id)
 
 
 def _process_batch_item(item):

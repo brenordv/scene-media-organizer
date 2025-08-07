@@ -1,4 +1,5 @@
 import os
+import uuid
 from contextlib import contextmanager
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
@@ -51,6 +52,18 @@ class WorkQueueManager:
                                              modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                              media_info_cache_id UUID NULL);"""
                     cursor.execute(create_table_query)
+
+                    self._logger.debug("Creating batch_control table if it does not exist")
+                    create_table_query = """
+                                         CREATE TABLE IF NOT EXISTS batch_control (
+                                             batch_id UUID NOT NULL,
+                                             work_queue_id UUID NOT NULL,
+                                             in_progress BOOLEAN NOT NULL DEFAULT FALSE,
+                                             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                                             modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                         );"""
+                    cursor.execute(create_table_query)
+
                     conn.commit()
         except psycopg2.Error as e:
             error_message = f"Error creating the work queue table: {str(e)}"
@@ -61,7 +74,7 @@ class WorkQueueManager:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug(f"Adding {full_path} to the work queue")
+                    self._logger.debug(f"Adding {full_path} to the work queue with status {status}")
                     insert_query = """INSERT INTO work_queue (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id) 
                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                       returning id"""
@@ -103,29 +116,64 @@ class WorkQueueManager:
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
-    def get_next_batch(self):
+    def get_next_batch(self, batch_id):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug("Getting next batch of work items with status PENDING")
+                    self._logger.debug(f"Checking if we have a batch in progress...")
+                    select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
+                    cursor.execute(select_query)
+                    row = cursor.fetchone()
 
+                    if row is not None:
+                        self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
+                        return [], batch_id
+
+                    self._logger.debug("Getting next batch of work items with status PENDING")
                     update_and_select_query = """
                                               UPDATE work_queue
                                               SET status = 'WORKING',
                                                   modified_at = CURRENT_TIMESTAMP
                                               WHERE status = 'PENDING'
-                                              RETURNING id, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, created_at, modified_at, media_info_cache_id
-                                              """
+                                              RETURNING id, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, created_at, modified_at, media_info_cache_id"""
 
                     cursor.execute(update_and_select_query)
                     rows = cursor.fetchall()
-                    conn.commit()
 
-                self._logger.debug(f"Found {len(rows)} work items to process")
-                return [self._parse_work_item_row_to_object(row) for row in rows]
+                    if len(rows) == 0:
+                        self._logger.debug("Nothing to process")
+                        conn.commit()
+                        return [], None
+
+                    self._logger.debug(f"Found {len(rows)} work items to process. Creating a new batch...")
+                    batch = [self._parse_work_item_row_to_object(row) for row in rows]
+
+                    # At this point we can generate a new batch ID, because there's nothing in progress.
+                    batch_id = str(uuid.uuid4())
+
+                    for batch_item in batch:
+                        insert_query = """INSERT INTO batch_control (batch_id, work_queue_id, in_progress) VALUES (%s, %s, true)"""
+                        cursor.execute(insert_query, (batch_id, batch_item['id']))
+
+                    conn.commit()
+                return batch, batch_id
 
         except psycopg2.Error as e:
             error_message = f"Error getting next batch of work items: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    def set_batch_as_done(self, batch_id):
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    self._logger.debug(f"Setting batch [{batch_id}] as done...")
+                    update_query = """UPDATE batch_control SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP WHERE batch_id = %s"""
+                    cursor.execute(update_query, (batch_id,))
+                    conn.commit()
+
+        except psycopg2.Error as e:
+            error_message = f"Error setting batch [{batch_id}] as done: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 

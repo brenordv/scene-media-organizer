@@ -35,6 +35,12 @@ The project requires Python 3.13.1 and the following dependencies:
 - [media identifier api](https://github.com/brenordv/media-identifier-api)
 - Rar command line tool
 
+#### Linux dependencies
+```bash
+sudo apt-get update
+sudo apt-get install libpq-dev python3-dev build-essential unrar
+```
+
 ## Configuration
 
 The application uses environment variables for configuration:
@@ -69,3 +75,16 @@ Both of those will:
 1. Create the virtual environment if it doesn't exist
 2. Install the dependencies
 3. Start the application
+
+#### Linux
+Because of the way bash works, on Linux you need to run the script like this:
+```bash
+source start.sh
+```
+
+or like this:
+```bash
+. start.sh
+```
+
+Otherwise, it will not work as expected.
