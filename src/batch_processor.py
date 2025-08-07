@@ -2,46 +2,48 @@ import os
 import time
 from pathlib import Path
 
-from simple_log_factory.log_factory import log_factory
-
+from src.data.activity_logger import ActivityTracker
 from src.tasks.check_for_file_stability import check_is_file_stable
 from src.tasks.copy_file import copy_file
 from src.tasks.decompress_file import decompress_file
 from src.tasks.identify_file import identify_file
 from src.tasks.sanitize_string_for_filename import sanitize_string_for_filename
-from src.work_queue_manager import WorkQueueManager
+from src.data.work_queue_manager import WorkQueueManager
 
-_logger = log_factory("Batch Processor", unique_handler_types=True)
 _work_queue_manager = WorkQueueManager()
 _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
 _series_base_folder = os.environ.get('SERIES_BASE_FOLDER')
+_activity_tracker = ActivityTracker("Batch Processor")
+
 
 if _series_base_folder is None or _movies_base_folder is None:
-    _logger.error("No base folders defined. Exiting...")
+    _activity_tracker.error("No base folders defined. Exiting...")
     exit(1)
 
 
 def batch_processor():
+    tag = "[BATCH PROCESSOR]"
     current_batch_id = None
     while True:
-        _logger.debug("Checking if we have a batch to work with...")
+        _activity_tracker.debug(f"{tag} Checking if we have a batch to work with...")
         batch, current_batch_id = _work_queue_manager.get_next_batch(batch_id=current_batch_id)
 
         if batch is not None and len(batch) > 0:
-            _logger.info(f"🦇 New batch found! Working on [{current_batch_id}]!")
+            _activity_tracker.info(f"{tag} 🦇 NEW BATCH FOUND! Working on [{current_batch_id}]!")
 
             _process_batch(batch, current_batch_id)
 
-            _logger.info(f"🎉 Batch processing done. Batch id: {current_batch_id}...")
+            _activity_tracker.info(f"{tag} 🎉 BATCH PROCESSING DONE! Batch id: {current_batch_id}...")
 
         else:
-            _logger.debug("No batch to work with. Let's keep waiting...")
+            _activity_tracker.debug(f"{tag} No batch to work with. Let's keep waiting...")
 
         time.sleep(10)
 
 
 def _process_batch(batch, current_batch_id):
-    _logger.debug(f"Processing batch of {len(batch)} items. Batch id: {current_batch_id}...")
+    tag = f"[B.ID: {current_batch_id}]"
+    _activity_tracker.debug(f"{tag} Processing batch of {len(batch)} items...")
     try_again = []
 
     # First try.
@@ -52,23 +54,23 @@ def _process_batch(batch, current_batch_id):
                 try_again.append(file_to_retry)
                 continue
         except Exception as e:
-            _logger.error(f"Error processing item [{item['id']}]: {str(e)}")
+            _activity_tracker.error(f"{tag} Error processing item [{item['id']}]: {str(e)}")
             item['status'] = 'FAILED_PROCESSING'
             _work_queue_manager.update(item)
 
     if len(try_again) > 0:
-        _logger.debug(f"Retrying to process {len(try_again)} items...")
+        _activity_tracker.debug(f"{tag} Retrying to process {len(try_again)} items...")
 
     # Retry.
     for item in try_again:
         try:
             _process_batch_item(item)
         except Exception as e:
-            _logger.error(f"Error retrying to process item [{item['id']}]: {str(e)}")
+            _activity_tracker.error(f"{tag} Error retrying to process item [{item['id']}]: {str(e)}")
             item['status'] = 'FAILED_PROCESSING_RETRY'
             _work_queue_manager.update(item)
 
-    _logger.debug(f"In case any 'WORKING' items slipped through, we're going to move them back to pending so the next batch will take care of them.")
+    _activity_tracker.debug(f"{tag} In case any 'WORKING' items slipped through, we're going to move them back to pending so the next batch will take care of them.")
     _work_queue_manager.move_working_items_back_to_pending(current_batch_id)
     _work_queue_manager.set_batch_as_done(current_batch_id)
 
@@ -77,11 +79,14 @@ def _process_batch_item(item):
     item_id = item['id']
     full_path = item['full_path']
     full_path_obj = Path(full_path)
-    _logger.debug(f"Processing item {item_id}...")
+    tag = f"[I.ID: {item_id}]"
+
+    _activity_tracker.debug(f"{tag} Processing item {full_path}...")
+
     is_file_stable = check_is_file_stable(full_path)
 
     if not is_file_stable:
-        _logger.warning(f"Item {item_id} is not stable. Will try again later.")
+        _activity_tracker.warning(f"{tag} File is not stable. Will try again later. File: {full_path}")
         return item
 
     media_info = identify_file(full_path)
@@ -103,7 +108,7 @@ def _process_batch_item(item):
     media_info_id = media_info.get('id')
 
     if media_info_id is None:
-        _logger.error(f"Item {item_id} has no media info id. No way to proceed with it. Media Info cache id: {media_info_id}")
+        _activity_tracker.error(f"{tag} File has no media info id. No way to proceed with it. Media Info cache id: {media_info_id}")
         item['status'] = 'FAILED_ID'
         _work_queue_manager.update(item)
 
@@ -113,7 +118,7 @@ def _process_batch_item(item):
     media_type = media_info.get('media_type')
 
     if media_type is None or media_type not in ['movie', 'tv']:
-        _logger.error(f"Item {item_id} has no media type. No way to proceed with it. Media Info cache id: {media_info_id}")
+        _activity_tracker.error(f"{tag} File has no media type. No way to proceed with it. Media Info cache id: {media_info_id}")
         item['status'] = 'FAILED_ID'
         _work_queue_manager.update(item)
         return None
@@ -121,7 +126,7 @@ def _process_batch_item(item):
     title = media_info.get('title')
 
     if title is None:
-        _logger.error(f"Item {item_id} has no title. No way to proceed with it. Media Info cache id: {media_info_id}")
+        _activity_tracker.error(f"{tag} File has no title. No way to proceed with it. Media Info cache id: {media_info_id}")
         item['status'] = 'FAILED_ID'
         _work_queue_manager.update(item)
         return None
@@ -139,7 +144,7 @@ def _process_batch_item(item):
         season_number = media_info.get('season')
 
         if season_number is None:
-            _logger.error(f"Item {item_id} has no season number. No way to proceed with it. Media Info cache id: {media_info_id}")
+            _activity_tracker.error(f"{tag} File has no season number. No way to proceed with it. Media Info cache id: {media_info_id}")
             item['status'] = 'FAILED_ID'
             _work_queue_manager.update(item)
             return None
@@ -156,9 +161,9 @@ def _process_batch_item(item):
     if copy_result:
         item['status'] = 'DONE'
         _work_queue_manager.update(item)
-        _logger.info(f"All done with [{full_path_obj.name}]! \\o/")
+        _activity_tracker.info(f"{tag} All done with [{full_path_obj.name}]! \\o/")
         return None
 
-    _logger.warning(f"Failed to copy file [{full_path_obj.name}]. Will try again later.")
+    _activity_tracker.warning(f"{tag} Failed to copy file [{full_path_obj.name}]. Will try again later.")
 
     return None

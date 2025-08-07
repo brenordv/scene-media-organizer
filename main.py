@@ -1,20 +1,18 @@
 from dotenv import load_dotenv
 load_dotenv()
-from simple_log_factory.log_factory import log_factory
+
 import threading
 import os
 import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-
+from src.data.activity_logger import ActivityTracker
 from src.batch_processor import batch_processor
 from src.queue_worker import add_to_queue, queue_consumer
-from src.work_queue_manager import WorkQueueManager
+from src.data.work_queue_manager import WorkQueueManager
 
-
-_logger = log_factory("SMO-Watchdog", unique_handler_types=True)
 _work_queue_manager = WorkQueueManager()
-
+_activity_logger = ActivityTracker("SMO-Watchdog")
 
 class MyHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -27,7 +25,7 @@ def main():
     observer = Observer()
     observer.schedule(event_handler, monitored_path, recursive=True)
 
-    _logger.info(f"Watching folder: {monitored_path}")
+    _activity_logger.info(f"Watching folder: {monitored_path}")
     observer.start()
 
     threading.Thread(target=queue_consumer, daemon=True).start()

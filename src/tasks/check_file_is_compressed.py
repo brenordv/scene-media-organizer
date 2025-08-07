@@ -1,4 +1,3 @@
-import os
 import re
 import zipfile
 from typing import Pattern
@@ -87,7 +86,7 @@ if __name__ == "__main__":
     # Collect (path, expected_result) pairs
     tests = []
     with tempfile.TemporaryDirectory() as tmpdir:
-        # 1) Extension-based positives
+        # 1) Extension-based positive
         tests.append((create_file("archive.zip"), True))
         tests.append((create_file("backup.tar.gz"), True))
         tests.append((create_file("video.mp4"), False))

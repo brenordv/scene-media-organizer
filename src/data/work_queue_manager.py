@@ -1,34 +1,16 @@
-import os
 import uuid
-from contextlib import contextmanager
 import psycopg2
-from psycopg2.pool import SimpleConnectionPool
-from simple_log_factory.log_factory import log_factory
+
+from src.data.activity_logger import ActivityTracker
+from src.data.base_repository import BaseRepository
+
+_activity_tracker = ActivityTracker("Work Queue Manager")
 
 
-_db_pool = SimpleConnectionPool(
-    minconn = 1,
-    maxconn = 10,
-    host = os.environ.get('POSTGRES_HOST', 'localhost'),
-    port = os.environ.get('POSTGRES_PORT', '5432'),
-    user = os.environ.get('POSTGRES_USER', 'postgres'),
-    password=os.environ.get('POSTGRES_PASSWORD', 'postgres'),
-    dbname = 'smo_watchdog'
-)
-
-class WorkQueueManager:
+class WorkQueueManager(BaseRepository):
     def __init__(self):
-        self._conn_pool = _db_pool
-        self._logger = log_factory("Work Queue Manager", unique_handler_types=True)
-        self._ensure_table_exists()
-
-    @contextmanager
-    def _get_connection(self):
-        conn = self._conn_pool.getconn()
-        try:
-            yield conn
-        finally:
-            self._conn_pool.putconn(conn)
+        super().__init__("Work Queue Manager")
+        self._logger = _activity_tracker
 
     def _ensure_table_exists(self):
         try:
@@ -74,18 +56,16 @@ class WorkQueueManager:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug(f"Adding {full_path} to the work queue with status {status}")
                     insert_query = """INSERT INTO work_queue (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id) 
                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                       returning id"""
                     cursor.execute(insert_query, (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id))
                     conn.commit()
                     row = cursor.fetchone()
-                    if row is None:
-                        raise RuntimeError(
-                            f"Error adding {full_path} to the work queue: No row returned from the database")
+                    if row is not None:
+                        return row[0]
 
-                    return row[0]
+                    raise RuntimeError(f"Error adding {full_path} to the work queue: No row returned from the database")
         except psycopg2.Error as e:
             error_message = f"Error adding {full_path} to the work queue: {str(e)}"
             self._logger.error(error_message)
@@ -96,7 +76,10 @@ class WorkQueueManager:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     work_item_id = work_item['id']
-                    self._logger.debug(f"Updating work item {work_item_id}")
+                    full_path = work_item.get('full_path')
+                    target_path = work_item.get('target_path')
+                    status = work_item.get('status')
+                    self._logger.debug(f"Updating work item [{work_item_id}]. Full path: {full_path}, target path: {target_path}, status: {status}")
 
                     keys = [key for key in work_item.keys() if key not in ['id', 'created_at', 'modified_at']]
                     values = []
@@ -180,12 +163,12 @@ class WorkQueueManager:
     def move_working_items_back_to_pending(self, batch_id):
         try:
             if batch_id is None:
-                self._logger.debug("No batch id provided. Skipping moving working items back to pending...")
+                self._logger.error("No batch id provided. Skipping moving working items back to pending...")
                 return
 
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug("Moving working items back to pending so the next back end can process them...")
+                    self._logger.debug(f"[Batch ID: {batch_id}] Moving working items back to pending so the next back end can process them...")
                     # TODO: Add attempt control, otherwise we might end up retrying impossibly wrong items forever.
                     update_query = """UPDATE work_queue
                                       SET status = 'PENDING',
@@ -198,7 +181,7 @@ class WorkQueueManager:
                     conn.commit()
 
         except psycopg2.Error as e:
-            error_message = f"Error moving working items back to pending: {str(e)}"
+            error_message = f"[Batch ID: {batch_id}] Error moving working items back to pending: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
