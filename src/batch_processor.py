@@ -28,7 +28,11 @@ def batch_processor():
         batch, current_batch_id = _work_queue_manager.get_next_batch(batch_id=current_batch_id)
 
         if batch is not None and len(batch) > 0:
+            _logger.info(f"🦇 New batch found! Working on [{current_batch_id}]!")
+
             _process_batch(batch, current_batch_id)
+
+            _logger.info(f"🎉 Batch processing done. Batch id: {current_batch_id}...")
 
         else:
             _logger.debug("No batch to work with. Let's keep waiting...")
@@ -64,6 +68,8 @@ def _process_batch(batch, current_batch_id):
             item['status'] = 'FAILED_PROCESSING_RETRY'
             _work_queue_manager.update(item)
 
+    _logger.debug(f"In case any 'WORKING' items slipped through, we're going to move them back to pending so the next batch will take care of them.")
+    _work_queue_manager.move_working_items_back_to_pending(current_batch_id)
     _work_queue_manager.set_batch_as_done(current_batch_id)
 
 

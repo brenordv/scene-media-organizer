@@ -177,6 +177,31 @@ class WorkQueueManager:
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    def move_working_items_back_to_pending(self, batch_id):
+        try:
+            if batch_id is None:
+                self._logger.debug("No batch id provided. Skipping moving working items back to pending...")
+                return
+
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    self._logger.debug("Moving working items back to pending so the next back end can process them...")
+                    # TODO: Add attempt control, otherwise we might end up retrying impossibly wrong items forever.
+                    update_query = """UPDATE work_queue
+                                      SET status      = 'PENDING', \
+                                          modified_at = CURRENT_TIMESTAMP
+                                      WHERE status = 'WORKING'
+                                        AND id IN (SELECT work_queue_id FROM batch_control WHERE batch_id = %s)"""
+                    cursor.execute(update_query, (batch_id,))
+
+                    cursor.execute(update_query)
+                    conn.commit()
+
+        except psycopg2.Error as e:
+            error_message = f"Error moving working items back to pending: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
     @staticmethod
     def _parse_work_item_row_to_object(row):
         return {
