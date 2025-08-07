@@ -1,6 +1,7 @@
 import re
 import zipfile
 from typing import Pattern
+import os
 
 # Any file ending in one of these is almost certainly compressed
 COMPRESSED_EXTENSIONS = (
@@ -111,11 +112,12 @@ if __name__ == "__main__":
         passed = failed = 0
         for path, expected in tests:
             result = is_compressed_file(path)
+            basename = os.path.basename(path)
             if result == expected:
-                print(f"PASS: {os.path.basename(path)} → {result}")
+                print(f"PASS: {basename} → {result}")
                 passed += 1
             else:
-                print(f"FAIL: {os.path.basename(path)} → got {result}, expected {expected}")
+                print(f"FAIL: {basename} → got {result}, expected {expected}")
                 failed += 1
 
         # Summary
