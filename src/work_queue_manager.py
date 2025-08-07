@@ -188,7 +188,7 @@ class WorkQueueManager:
                     self._logger.debug("Moving working items back to pending so the next back end can process them...")
                     # TODO: Add attempt control, otherwise we might end up retrying impossibly wrong items forever.
                     update_query = """UPDATE work_queue
-                                      SET status      = 'PENDING', \
+                                      SET status = 'PENDING',
                                           modified_at = CURRENT_TIMESTAMP
                                       WHERE status = 'WORKING'
                                         AND id IN (SELECT work_queue_id FROM batch_control WHERE batch_id = %s)"""
