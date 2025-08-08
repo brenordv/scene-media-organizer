@@ -79,8 +79,7 @@ def _process_batch_item(item):
     full_path_obj = Path(full_path)
     tag = f"[I.ID: {item_id}]"
 
-    _activity_tracker.debug(f"{tag} Processing item {full_path}...")
-
+    _activity_tracker.debug(f"{tag} Processing item {full_path}. Checking if file is stable...")
     is_file_stable = check_is_file_stable(full_path)
 
     if not is_file_stable:
