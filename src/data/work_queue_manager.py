@@ -171,10 +171,8 @@ class WorkQueueManager(BaseRepository):
                                       SET status = 'PENDING',
                                           modified_at = CURRENT_TIMESTAMP
                                       WHERE status = 'WORKING'
-                                        AND id IN (SELECT work_queue_id FROM batch_control WHERE batch_id = %s)"""
+                                        AND id IN ( SELECT work_queue_id FROM batch_control WHERE batch_id = %s )"""
                     cursor.execute(update_query, (batch_id,))
-
-                    cursor.execute(update_query)
                     conn.commit()
 
         except psycopg2.Error as e:
