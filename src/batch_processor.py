@@ -34,9 +34,7 @@ def batch_processor():
             _process_batch(batch, current_batch_id)
 
             _activity_tracker.info(f"{tag} 🎉 BATCH PROCESSING DONE! Batch id: {current_batch_id}...")
-
-        else:
-            _activity_tracker.debug(f"{tag} No batch to work with. Let's keep waiting...")
+            current_batch_id = None
 
         time.sleep(10)
 

@@ -103,7 +103,6 @@ class WorkQueueManager(BaseRepository):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug(f"Checking if we have a batch in progress...")
                     select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
                     cursor.execute(select_query)
                     row = cursor.fetchone()
@@ -112,7 +111,6 @@ class WorkQueueManager(BaseRepository):
                         self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
                         return [], batch_id
 
-                    self._logger.debug("Getting next batch of work items with status PENDING")
                     update_and_select_query = """
                                               UPDATE work_queue
                                               SET status = 'WORKING',
@@ -124,7 +122,6 @@ class WorkQueueManager(BaseRepository):
                     rows = cursor.fetchall()
 
                     if len(rows) == 0:
-                        self._logger.debug("Nothing to process")
                         conn.commit()
                         return [], None
 

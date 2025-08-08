@@ -66,7 +66,6 @@ class ActivityTracker(BaseRepository):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug(f"Logging activity: {activity}")
                     insert_query = "INSERT INTO activity_tracker (activity) VALUES (%s)"
                     cursor.execute(insert_query, (activity,))
                     conn.commit()
