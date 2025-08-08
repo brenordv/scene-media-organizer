@@ -25,7 +25,6 @@ def batch_processor():
     tag = "[BATCH PROCESSOR]"
     current_batch_id = None
     while True:
-        _activity_tracker.debug(f"{tag} Checking if we have a batch to work with...")
         batch, current_batch_id = _work_queue_manager.get_next_batch(batch_id=current_batch_id)
 
         if batch is not None and len(batch) > 0:
