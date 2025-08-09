@@ -27,9 +27,9 @@ def copy_file(src_file, dst_path_str):
     for i in range(max_retries):
         try:
             _logger.debug(f"Copying file [{src_path.name}] to [{dst_path}]")
-            st = os.stat(src_file, follow_symlinks=True)
+
             shutil.copy2(src_file, dst_file)
-            os.chown(dst_file, st.st_uid, st.st_gid)  # requires root
+            #_change_destination_ownership(dst_file, src_file)
             return True
         except Exception as e:
             _logger.warning(f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}")
@@ -39,3 +39,17 @@ def copy_file(src_file, dst_path_str):
             time.sleep(delay_seconds)
 
     return False
+
+
+def _change_destination_ownership(dst_file, src_file):
+    """
+    This changes the ownership of the destination file to match the source file.
+    Required only in two situations:
+    1. There's a process that modifies the destination file
+    2. This script is run as the root
+    :param dst_file: destination file
+    :param src_file: source file
+    :return: None.
+    """
+    st = os.stat(src_file, follow_symlinks=True)
+    os.chown(dst_file, st.st_uid, st.st_gid)  # requires root
