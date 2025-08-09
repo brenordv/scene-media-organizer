@@ -10,6 +10,7 @@ from src.tasks.decompress_file import decompress_file
 from src.tasks.identify_file import identify_file
 from src.tasks.sanitize_string_for_filename import sanitize_string_for_filename
 from src.data.work_queue_manager import WorkQueueManager
+from src.tasks.verify_batch_data import verify_batch_data
 
 _work_queue_manager = WorkQueueManager()
 _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
@@ -72,11 +73,15 @@ def _process_batch(batch, current_batch_id):
     _work_queue_manager.move_working_items_back_to_pending(current_batch_id)
     _work_queue_manager.set_batch_as_done(current_batch_id)
 
+    batch_data = _work_queue_manager.get_batch_data(current_batch_id)
+    batch_verification = verify_batch_data(batch_data)
+    _work_queue_manager.update_batch_verification(current_batch_id, batch_verification)
     try:
-        batch_data = _work_queue_manager.get_batch_data(current_batch_id)
+
         notification_message = {
             "batch_id": current_batch_id,
-            "items": batch_data
+            "items": batch_data,
+            "verified": batch_verification
         }
         _notification_agent.post_message(message=notification_message)
     except Exception as e:

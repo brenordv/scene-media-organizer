@@ -41,6 +41,7 @@ class WorkQueueManager(BaseRepository):
                                              batch_id UUID NOT NULL,
                                              work_queue_id UUID NOT NULL,
                                              in_progress BOOLEAN NOT NULL DEFAULT FALSE,
+                                             verified BOOLEAN NOT NULL DEFAULT FALSE,
                                              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                                              modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                                          );"""
@@ -197,6 +198,23 @@ class WorkQueueManager(BaseRepository):
 
         except psycopg2.Error as e:
             error_message = f"[Batch ID: {batch_id}] Error getting batch data: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    def update_batch_verification(self, batch_id, verified):
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    self._logger.debug(f"[Batch ID: {batch_id}] Updating batch verification to {verified}...")
+                    update_query = """UPDATE batch_control
+                                      SET verified = %s,
+                                          modified_at = CURRENT_TIMESTAMP
+                                      WHERE id = %s"""
+                    cursor.execute(update_query, (verified, batch_id))
+                    conn.commit()
+
+        except psycopg2.Error as e:
+            error_message = f"[Batch ID: {batch_id}] Error updating batch verification: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 

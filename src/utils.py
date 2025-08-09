@@ -1,4 +1,6 @@
+import hashlib
 import os
+from pathlib import Path
 from typing import Optional, Union
 
 
@@ -23,3 +25,11 @@ def to_bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open('rb') as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()

@@ -116,7 +116,7 @@ def _get_summary_from_payload(payload):
 
     return summary
 
-def _compose_notification_message(insights, summary):
+def _compose_notification_message(insights, summary, batch_verified):
     # Compose a nice message to send to Telegram.
     batch_id = insights.get("batch_id") or summary.get("batch_id") or "?"
 
@@ -138,8 +138,10 @@ def _compose_notification_message(insights, summary):
         ordered = sorted(mapping.items(), key=lambda kv: kv[0])
         return "\n".join(f"• <code>{html.escape(str(k))}</code>: <b>{v}</b>" for k, v in ordered)
 
+    is_verified = "[✅VERIFIED✅]" if batch_verified else ""
+
     header = (
-        f"<b>🎬 Batch completed</b>"\
+        f"<b>🎬 Batch completed {is_verified}</b>"\
         f"\n<b>Batch ID</b>: <code>{html.escape(str(batch_id))}</code>"
     )
 
@@ -266,9 +268,10 @@ def _handle_notification(topic, payload_bytes):
     _activity_logger.debug(f"Message on '{topic}': {preview}")
 
     payload = json.loads(payload_bytes, object_hook=obj_dump_deserializer)
+    batch_verified = payload.get("verified")
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
-    message = _compose_notification_message(insights, summary)
+    message = _compose_notification_message(insights, summary, batch_verified)
     messages = _split_messages_to_prevent_message_too_long_error(message)
 
     for msg in messages:
