@@ -1,5 +1,6 @@
 import json
 import html
+from pathlib import Path
 from typing import Any, Dict, List
 
 from raccoontools.shared.serializer import obj_dump_deserializer
@@ -32,6 +33,8 @@ def _get_insights_from_payload(payload):
     archives_count = 0
     main_archive_files_count = 0
     with_target_path = 0
+    unique_filenames = set()
+
 
     for item in items:
         if not isinstance(item, dict):
@@ -39,6 +42,12 @@ def _get_insights_from_payload(payload):
 
         status = item.get("status") or "UNKNOWN"
         status_counts[status] = status_counts.get(status, 0) + 1
+
+        full_path = item.get("full_path")
+
+        if full_path is not None:
+            file = Path(full_path)
+            unique_filenames.add(file.stem)
 
         if status.startswith("FAILED"):
             failed_items.append(
@@ -69,6 +78,7 @@ def _get_insights_from_payload(payload):
             "main_archive_files": main_archive_files_count,
         },
         "with_target_path": with_target_path,
+        "unique_filenames": list(unique_filenames)
     }
 
     return insights
@@ -120,6 +130,7 @@ def _compose_notification_message(insights, summary):
     status_counts: Dict[str, int] = insights.get("status_counts", {})
     archive_counts: Dict[str, int] = insights.get("archive_counts", {})
     with_target_path = insights.get("with_target_path", 0)
+    unique_filenames = insights.get("unique_filenames", [])
 
     def fmt_kv_lines(mapping: Dict[str, int]) -> str:
         if not mapping:
@@ -177,6 +188,14 @@ def _compose_notification_message(insights, summary):
             more_note = f"\n… and {len(failed_items) - 20} more"
 
         details += f"\n\n<b>Failures</b>\n" + "\n".join(failed_lines) + more_note
+
+
+    if len(unique_filenames) > 0:
+        details += f"\n\n<b>Unique filenames:</b>\n"
+        for unique_filename in unique_filenames:
+            details += f"• {unique_filename}\n"
+
+        details += "\n"
 
     message = header + high_level + details
     return message.strip()
