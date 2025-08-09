@@ -5,13 +5,15 @@ import shutil
 
 from simple_log_factory.log_factory import log_factory
 
+from src.utils import to_bool_env
+
 _logger = log_factory("Copy File", unique_handler_types=True)
 
 
 def copy_file(src_file, dst_path_str):
     max_retries = 5
     base_delay_seconds = 3
-
+    change_ownership = to_bool_env("WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY", False)
     src_path = Path(src_file)
     dst_path = Path(dst_path_str)
 
@@ -29,7 +31,11 @@ def copy_file(src_file, dst_path_str):
             _logger.debug(f"Copying file [{src_path.name}] to [{dst_path}]")
 
             shutil.copy2(src_file, dst_file)
-            #_change_destination_ownership(dst_file, src_file)
+
+            if change_ownership:
+                # Will fail if the script is not run as root.
+                _change_destination_ownership(dst_file, src_file)
+
             return True
         except Exception as e:
             _logger.warning(f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}")
