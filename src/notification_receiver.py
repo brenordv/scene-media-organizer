@@ -4,10 +4,13 @@ from typing import Any, Dict, List
 
 from raccoontools.shared.serializer import obj_dump_deserializer
 
+from src.data.activity_logger import ActivityTracker
 from src.data.notification_repository import NotificationRepository
 from src.tasks.send_telegram_message import send_telegram_message
 
+_activity_logger = ActivityTracker("Notification Receiver")
 _notification_agent = NotificationRepository()
+
 
 def _get_insights_from_payload(payload):
     # Considering the payload, what useful insights  can we extract in a heuristic way?
@@ -240,6 +243,9 @@ def _split_messages_to_prevent_message_too_long_error(message):
     return chunks
 
 def _handle_notification(topic, payload_bytes):
+    preview = payload_bytes[:256]
+    _activity_logger.debug(f"Message on '{topic}': {preview}")
+
     payload = json.loads(payload_bytes, default=obj_dump_deserializer)
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
