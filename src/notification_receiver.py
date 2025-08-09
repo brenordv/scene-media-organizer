@@ -138,7 +138,7 @@ def _compose_notification_message(insights, summary, batch_verified):
         ordered = sorted(mapping.items(), key=lambda kv: kv[0])
         return "\n".join(f"• <code>{html.escape(str(k))}</code>: <b>{v}</b>" for k, v in ordered)
 
-    is_verified = "[✅VERIFIED✅]" if batch_verified else ""
+    is_verified = "[✅VERIFIED✅]" if batch_verified else "[❌UNVERIFIED❌]"
 
     header = (
         f"<b>🎬 Batch completed {is_verified}</b>"\
