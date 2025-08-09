@@ -9,7 +9,7 @@ from src.data.notification_repository import NotificationRepository
 from src.tasks.send_telegram_message import send_telegram_message
 
 _activity_logger = ActivityTracker("Notification Receiver")
-_notification_agent = NotificationRepository()
+_notification_agent = NotificationRepository(client_id="smo-watchdog-notification-receiver")
 
 
 def _get_insights_from_payload(payload):
@@ -256,4 +256,5 @@ def _handle_notification(topic, payload_bytes):
         send_telegram_message(msg)
 
 def handle_notification_messages():
+    _activity_logger.debug("Starting to listen for notification messages...")
     _notification_agent.start_reading(message_handler=_handle_notification, background=False)

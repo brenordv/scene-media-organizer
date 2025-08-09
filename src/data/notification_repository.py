@@ -2,6 +2,8 @@ import json
 import os
 from typing import Callable, Optional, Sequence, Tuple, Union
 import paho.mqtt.client as mqtt
+from paho.mqtt.client import error_string as mqtt_error_string
+
 from raccoontools.shared.serializer import obj_dump_serializer
 
 from src.data.activity_logger import ActivityTracker
@@ -190,7 +192,7 @@ class NotificationRepository:
     def _on_disconnect(self, client: mqtt.Client, userdata, rc: int) -> None:
         self._is_connected = False
         if rc != 0:
-            self._logger.warning(f"Unexpected MQTT disconnection: rc={rc}")
+            self._logger.warning(f"Unexpected MQTT disconnection: rc={rc} ({mqtt_error_string(rc)})")
         else:
             self._logger.info("Disconnected from MQTT broker")
 

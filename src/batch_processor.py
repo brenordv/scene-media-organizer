@@ -15,7 +15,7 @@ _work_queue_manager = WorkQueueManager()
 _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
 _series_base_folder = os.environ.get('SERIES_BASE_FOLDER')
 _activity_tracker = ActivityTracker("Batch Processor")
-_notification_agent = NotificationRepository()
+_notification_agent = NotificationRepository(client_id="smo-watchdog-notification-sender")
 
 if _series_base_folder is None or _movies_base_folder is None:
     _activity_tracker.error("No base folders defined. Exiting...")

@@ -29,9 +29,9 @@ def main():
     _activity_logger.info(f"Watching folder: {monitored_path}")
     observer.start()
 
+    threading.Thread(target=handle_notification_messages, daemon=True).start()
     threading.Thread(target=queue_consumer, daemon=True).start()
     threading.Thread(target=batch_processor, daemon=True).start()
-    threading.Thread(target=handle_notification_messages, daemon=True).start()
 
     try:
         while True:
