@@ -246,7 +246,7 @@ def _handle_notification(topic, payload_bytes):
     preview = payload_bytes[:256]
     _activity_logger.debug(f"Message on '{topic}': {preview}")
 
-    payload = json.loads(payload_bytes, default=obj_dump_deserializer)
+    payload = json.loads(payload_bytes, object_hook=obj_dump_deserializer)
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
     message = _compose_notification_message(insights, summary)
