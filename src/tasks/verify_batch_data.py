@@ -5,13 +5,12 @@ from src.utils import _sha256
 
 _activity_logger = ActivityTracker("Verify Batch Data")
 
-def verify_batch_data(batch_data):
-    batch_id = batch_data.get("batch_id")
-    done_items = [item for item in batch_data.get("items", []) if item.get("status") == "DONE" and item.get("target_path") is not None]
+def verify_batch_data(batch_id, batch_data):
+    done_items = [item for item in batch_data if item.get("status") == "DONE" and item.get("target_path") is not None]
 
     if len(done_items) == 0:
         _activity_logger.warning(f"[B.ID: {batch_id}] No items set as DONE. Looks like it failed.")
-        return
+        return False
 
     _activity_logger.debug(f"[B.ID: {batch_id}] Verifying {len(done_items)} items set as DONE.")
 
@@ -77,6 +76,6 @@ def verify_batch_data(batch_data):
         )
 
     if all_ok:
-        _activity_logger.info(f"[B.ID: {batch_id}] ✅ Verification complete. All DONE items look good.")
+        _activity_logger.info(f"[B.ID: {batch_id}] ✅✅✅ Verification complete. ✅✅✅ All DONE items look good.")
 
     return all_ok

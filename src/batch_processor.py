@@ -74,7 +74,7 @@ def _process_batch(batch, current_batch_id):
     _work_queue_manager.set_batch_as_done(current_batch_id)
 
     batch_data = _work_queue_manager.get_batch_data(current_batch_id)
-    batch_verification = verify_batch_data(batch_data)
+    batch_verification = verify_batch_data(current_batch_id, batch_data)
     _work_queue_manager.update_batch_verification(current_batch_id, batch_verification)
     try:
 
