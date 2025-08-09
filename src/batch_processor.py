@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from src.data.activity_logger import ActivityTracker
+from src.data.notification_repository import NotificationRepository
 from src.tasks.check_for_file_stability import check_is_file_stable
 from src.tasks.copy_file import copy_file
 from src.tasks.decompress_file import decompress_file
@@ -14,7 +15,7 @@ _work_queue_manager = WorkQueueManager()
 _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
 _series_base_folder = os.environ.get('SERIES_BASE_FOLDER')
 _activity_tracker = ActivityTracker("Batch Processor")
-
+_notification_agent = NotificationRepository()
 
 if _series_base_folder is None or _movies_base_folder is None:
     _activity_tracker.error("No base folders defined. Exiting...")
@@ -70,6 +71,16 @@ def _process_batch(batch, current_batch_id):
     _activity_tracker.debug(f"{tag} In case any 'WORKING' items slipped through, we're going to move them back to pending so the next batch will take care of them.")
     _work_queue_manager.move_working_items_back_to_pending(current_batch_id)
     _work_queue_manager.set_batch_as_done(current_batch_id)
+
+    try:
+        batch_data = _work_queue_manager.get_batch_data(current_batch_id)
+        notification_message = {
+            "batch_id": current_batch_id,
+            "items": batch_data
+        }
+        _notification_agent.post_message(message=notification_message)
+    except Exception as e:
+        _activity_tracker.error(f"{tag} Error sending batch completion notification: {str(e)}")
 
 
 def _process_batch_item(item):

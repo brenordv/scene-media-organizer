@@ -10,6 +10,7 @@ from src.data.activity_logger import ActivityTracker
 from src.batch_processor import batch_processor
 from src.queue_worker import add_to_queue, queue_consumer
 from src.data.work_queue_manager import WorkQueueManager
+from src.notification_receiver import handle_notification_messages
 
 _work_queue_manager = WorkQueueManager()
 _activity_logger = ActivityTracker("SMO-Watchdog")
@@ -30,6 +31,7 @@ def main():
 
     threading.Thread(target=queue_consumer, daemon=True).start()
     threading.Thread(target=batch_processor, daemon=True).start()
+    threading.Thread(target=handle_notification_messages, daemon=True).start()
 
     try:
         while True:

@@ -180,6 +180,26 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    def get_batch_data(self, batch_id):
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    select_query = """SELECT * FROM work_queue
+                                      WHERE id IN (SELECT work_queue_id FROM batch_control WHERE batch_id = %s)"""
+                    cursor.execute(select_query, (batch_id,))
+                    rows = cursor.fetchall()
+
+                    if len(rows) == 0:
+                        return []
+
+                    batch = [self._parse_work_item_row_to_object(row) for row in rows]
+                    return batch
+
+        except psycopg2.Error as e:
+            error_message = f"[Batch ID: {batch_id}] Error getting batch data: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
     @staticmethod
     def _parse_work_item_row_to_object(row):
         return {
