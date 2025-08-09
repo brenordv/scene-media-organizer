@@ -7,7 +7,7 @@ _activity_logger = ActivityTracker("Verify Batch Data")
 
 def verify_batch_data(batch_data):
     batch_id = batch_data.get("batch_id")
-    done_items = [item for item in batch_data.get("items", []) if item.get("status") == "DONE"]
+    done_items = [item for item in batch_data.get("items", []) if item.get("status") == "DONE" and item.get("target_path") is not None]
 
     if len(done_items) == 0:
         _activity_logger.warning(f"[B.ID: {batch_id}] No items set as DONE. Looks like it failed.")
