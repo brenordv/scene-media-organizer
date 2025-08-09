@@ -209,7 +209,7 @@ class WorkQueueManager(BaseRepository):
                     update_query = """UPDATE batch_control
                                       SET verified = %s,
                                           modified_at = CURRENT_TIMESTAMP
-                                      WHERE id = %s"""
+                                      WHERE batch_id = %s"""
                     cursor.execute(update_query, (verified, batch_id))
                     conn.commit()
 
