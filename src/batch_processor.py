@@ -76,8 +76,8 @@ def _process_batch(batch, current_batch_id):
     batch_data = _work_queue_manager.get_batch_data(current_batch_id)
     batch_verification = verify_batch_data(current_batch_id, batch_data)
     _work_queue_manager.update_batch_verification(current_batch_id, batch_verification)
-    try:
 
+    try:
         notification_message = {
             "batch_id": current_batch_id,
             "items": batch_data,
