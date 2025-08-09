@@ -7,3 +7,4 @@ simple-log-factory == 0.0.1
 python-dotenv == 1.1.1
 pillow == 11.3.0
 paho-mqtt == 2.1.0
+raccoontools == 1.1.1

@@ -2,6 +2,8 @@ import json
 import os
 from typing import Callable, Optional, Sequence, Tuple, Union
 import paho.mqtt.client as mqtt
+from raccoontools.shared.serializer import obj_dump_serializer
+
 from src.data.activity_logger import ActivityTracker
 from src.utils import to_int
 
@@ -78,7 +80,7 @@ class NotificationRepository:
             raise ValueError("Topic must be provided either via constructor base_topic or the 'topic' argument")
 
         if isinstance(message, dict):
-            payload: Union[str, bytes] = json.dumps(message, separators=(",", ":"))
+            payload: Union[str, bytes] = json.dumps(message, default=obj_dump_serializer)
         elif isinstance(message, (str, bytes)):
             payload = message
         else:
