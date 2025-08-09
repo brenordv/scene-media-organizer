@@ -17,6 +17,9 @@ def sanitize_string_for_filename(input_str: str) -> str:
         elif c == ' ':
             # Replace spaces with hyphens for better readability
             result.append('-')
+        elif c in "'`":
+            # Remove apostrophes
+            result.append('')
         elif c.isalnum() or c in '.-_':
             # Keep alphanumeric, dots, hyphens, and underscores
             result.append(c)
