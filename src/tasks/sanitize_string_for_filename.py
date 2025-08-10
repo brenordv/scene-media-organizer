@@ -23,6 +23,9 @@ def sanitize_string_for_filename(input_str: str) -> str:
         elif c.isalnum() or c in '.-_':
             # Keep alphanumeric, dots, hyphens, and underscores
             result.append(c)
+        elif c == '&':
+            # Replacing & with the word "and"
+            result.append('and')
         else:
             # Replace any other special characters with underscores
             result.append('_')
