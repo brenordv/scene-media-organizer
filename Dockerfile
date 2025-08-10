@@ -1,13 +1,16 @@
 FROM python:3.13-slim
 
 # System packages required by the app and some Python wheels (psycopg2), plus unrar
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       build-essential \
-       libpq-dev \
-       unrar \
-       ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Enable non-free repository and install system packages (including unrar)
+RUN set -eux; \
+    sed -Ei 's/ main/ main non-free non-free-firmware/' /etc/apt/sources.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        unrar \
+        ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
