@@ -11,14 +11,14 @@ def sanitize_string_for_filename(input_str: str) -> str:
     result = []
 
     for c in input_str:
-        if c in '<>:"|?*\\/':
+        if c in '<>|?*\\/':
             # Replace filesystem-unsafe characters with underscores
             result.append('_')
         elif c == ' ':
             # Replace spaces with hyphens for better readability
             result.append('-')
-        elif c in "'`":
-            # Remove apostrophes
+        elif c in "'`\":":
+            # Remove apostrophes, quotes, backticks, and colons
             result.append('')
         elif c.isalnum() or c in '.-_':
             # Keep alphanumeric, dots, hyphens, and underscores
