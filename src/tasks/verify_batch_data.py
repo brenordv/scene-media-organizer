@@ -16,6 +16,7 @@ def verify_batch_data(batch_id, batch_data):
 
     all_ok = True
 
+    verification_result = {}
     for item in done_items:
         source_file = item.get("full_path")
         destination_path = item.get("target_path")
@@ -52,6 +53,10 @@ def verify_batch_data(batch_id, batch_data):
                 f"[B.ID: {batch_id}] Item [{item.get('id')}] file size mismatch: src={src_size} dst={dst_size} ({src_path} -> {dst_path})"
             )
             all_ok = False
+            verification_result[filename] = {
+                "size": False,
+                "hash": None
+            }
             continue
 
         try:
@@ -69,13 +74,20 @@ def verify_batch_data(batch_id, batch_data):
                 f"[B.ID: {batch_id}] Item [{item.get('id')}] content mismatch (SHA-256 differs) ({src_path} -> {dst_path})"
             )
             all_ok = False
+            verification_result[filename] = {
+                "size": True,
+                "hash": False
+            }
             continue
 
-        _activity_logger.debug(
-            f"[B.ID: {batch_id}] Item [{item.get('id')}] verified successfully ({src_path.name})"
-        )
+        _activity_logger.debug(f"[B.ID: {batch_id}] Item [{item.get('id')}] verified successfully ({src_path.name})")
+
+        verification_result[filename] = {
+            "size": True,
+            "hash": True
+        }
 
     if all_ok:
         _activity_logger.info(f"[B.ID: {batch_id}] ✅✅✅ Verification complete. ✅✅✅ All DONE items look good.")
 
-    return all_ok
+    return all_ok, verification_result

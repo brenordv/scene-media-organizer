@@ -74,14 +74,15 @@ def _process_batch(batch, current_batch_id):
     _work_queue_manager.set_batch_as_done(current_batch_id)
 
     batch_data = _work_queue_manager.get_batch_data(current_batch_id)
-    batch_verification = verify_batch_data(current_batch_id, batch_data)
+    batch_verification, batch_verification_details = verify_batch_data(current_batch_id, batch_data)
     _work_queue_manager.update_batch_verification(current_batch_id, batch_verification)
 
     try:
         notification_message = {
             "batch_id": current_batch_id,
             "items": batch_data,
-            "verified": batch_verification
+            "verified": batch_verification,
+            "verification_details": batch_verification_details,
         }
         _notification_agent.post_message(message=notification_message)
     except Exception as e:

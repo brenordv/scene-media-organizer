@@ -116,7 +116,7 @@ def _get_summary_from_payload(payload):
 
     return summary
 
-def _compose_notification_message(insights, summary, batch_verified):
+def _compose_notification_message(insights, summary, batch_verified, verification_details):
     # Compose a nice message to send to Telegram.
     batch_id = insights.get("batch_id") or summary.get("batch_id") or "?"
 
@@ -199,6 +199,24 @@ def _compose_notification_message(insights, summary, batch_verified):
 
         details += "\n"
 
+    if verification_details is not None and len(verification_details) > 0:
+        details += f"\n\n<b>Batch verification detail:</b>\n"
+        for filename, verification_detail in verification_details.items():
+            size_ok = verification_detail.get("size", False)
+            hash_ok = verification_detail.get("hash")
+
+            size_result = "✅" if size_ok else "❌"
+            if hash_ok is None:
+                hash_result = "👻"
+            elif hash_ok:
+                hash_result = "✅"
+            else:
+                hash_result = "❌"
+
+            details += f"• {filename}: Size: {size_result} | Hash: {hash_result}\n"
+
+        details += "\n"
+
     message = header + high_level + details
     return message.strip()
 
@@ -268,10 +286,11 @@ def _handle_notification(topic, payload_bytes):
     _activity_logger.debug(f"Message on '{topic}': {preview}")
 
     payload = json.loads(payload_bytes, object_hook=obj_dump_deserializer)
-    batch_verified = payload.get("verified")
+    batch_verified = payload.get("verified", False)
+    verification_details = payload.get("verification_details", {})
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
-    message = _compose_notification_message(insights, summary, batch_verified)
+    message = _compose_notification_message(insights, summary, batch_verified, verification_details)
     messages = _split_messages_to_prevent_message_too_long_error(message)
 
     for msg in messages:
