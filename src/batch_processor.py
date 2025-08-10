@@ -42,7 +42,6 @@ def batch_processor():
 
 def _process_batch(batch, current_batch_id):
     tag = f"[B.ID: {current_batch_id}]"
-    _activity_tracker.debug(f"{tag} Processing batch of {len(batch)} items...")
     try_again = []
 
     # First try.

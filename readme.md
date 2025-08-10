@@ -3,32 +3,24 @@
 A Python-based file monitoring and media organization system that automatically processes video files and archives,
 organizing them into structured directories based on media metadata.
 
-## How does it work?
-In a nutshell, it monitors a folder, and when a file is added, it identifies and copies it to the appropriate folder.
+### Request flow
+The chart below shows a simplified, happy-path request flow.
+![Data flow chart](data-flow.png)
 
-With a bit more detail:
-1. The app listens for filesystem events  to detect new files in the watch folder.
-2. When a new file is detected, it is added to a queue.
-3. This queue pre-processes the file, figuring out some basic metadata and saving it to the database (just metadata, and filename, not the actual file).
-4. In a timed fashion, we pull batches of files to process from the database and work on them.
-5. For each file in the batch, we wait for the file to become stable (i.e. not being modified by another process), and then we identify and process it.
-6. If the file is an archive, we extract it, making its content part of the next batch.
-7. Then we organize that file, copying it to a destination, according to the metadata.
-   - Movies: `Movies/Title--Year/` (if the year is available, otherwise it i just `Movies/Title/`)
-   - TV Series: `Series/Title/SeasonXX/`
+## How does it work?
+We have four major elements in this application:
+1. File system monitor: Triggered whenever a file/folder is created.
+2. Memory Queue: To temporarily hold the files that we receive in the events
+3. Activity Tracker: Logs all the activity happening in the system, so it can be closely monitored.
+4. MQTT Queue: To decouple the file processing from the notification system.
+
+### File Processing
+TODO: Add this.
+
+### Notification System
+TODO: Add this.
 
 ## Requirements
-
-The project requires Python 3.13.1 and the following dependencies:
-
-- `watchdog` - Filesystem monitoring
-- `requests` - HTTP requests for metadata APIs
-- `psycopg2` - Postgres database connectivity
-- `rarfile` - RAR archive extraction
-- `py7zr` - 7Z archive extraction
-- `pillow` - Image processing
-- `python-dotenv` - Environment variable management
-- `simple-log-factory` - Logging utilities
 
 ### External dependencies
 - Postgres database
@@ -53,6 +45,16 @@ The application uses environment variables for configuration:
 - `POSTGRES_USER` - Postgres user
 - `POSTGRES_PASSWORD` - Postgres password
 - `API_URL` - URL for the media identifier API
+- `MQTT_HOST` - MQTT host
+- `MQTT_PORT` - MQTT port
+- `MQTT_BASE_TOPIC`: Base topic for MQTT messages
+- `MQTT_TOPIC_ID`: Topic for media identifier API responses
+- `TELEGRAM_BOT_TOKEN`: Telegram bot token
+- `TELEGRAM_CHAT_ID`: Telegram chat ID
+- `TELEGRAM_PARSE_MODE`: Telegram parse mode. Defaults to HTML
+- `TELEGRAM_DISABLE_WEB_PREVIEW`: Telegram disable web preview. Defaults to False
+- `TELEGRAM_DISABLE_NOTIFICATION`: Telegram disable notification. Defaults to False
+- `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY`: Watchdog change destination ownership on copy. Defaults to False
 - `UNRAR_PATH` - Required for Windows executions. On Linux, it defaults to `unrar`.
 
 ## Usage
