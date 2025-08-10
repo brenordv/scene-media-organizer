@@ -10,7 +10,7 @@ def verify_batch_data(batch_id, batch_data):
 
     if len(done_items) == 0:
         _activity_logger.warning(f"[B.ID: {batch_id}] No items set as DONE. Looks like it failed.")
-        return False
+        return False, {}
 
     _activity_logger.debug(f"[B.ID: {batch_id}] Verifying {len(done_items)} items set as DONE.")
 
