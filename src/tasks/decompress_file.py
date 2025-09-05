@@ -9,7 +9,7 @@ from pathlib import Path
 
 from simple_log_factory.log_factory import log_factory
 
-_unrar_path = os.environ.get('UNRAR_PATH', 'unrar')
+_unrar_path = os.environ.get('UNRAR_PATH', '7z')
 _logger = log_factory("Decompress File", unique_handler_types=True)
 
 
@@ -38,7 +38,7 @@ def decompress_file(file_path):
             _logger.debug("Trying to decompress a rar archive...")
             try:
                 subprocess.run([
-                    _unrar_path, 'x', '-y', str(path), str(extract_dir)
+                    _unrar_path, 'x', '-y', str(path), f"-o{str(extract_dir)}"
                 ], check=True)
                 return True
             except (subprocess.CalledProcessError, FileNotFoundError) as e:

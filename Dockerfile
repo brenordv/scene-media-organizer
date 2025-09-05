@@ -5,7 +5,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential \
        libpq-dev \
-       unrar-free \
+       p7zip-full \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
