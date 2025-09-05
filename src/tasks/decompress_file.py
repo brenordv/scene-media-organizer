@@ -39,7 +39,7 @@ def decompress_file(file_path):
             try:
                 subprocess.run([
                     _unrar_path, 'x', '-y', str(path), str(extract_dir)
-                ], capture_output=True, text=True, check=True)
+                ], check=True)
                 return True
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 _logger.error(f"Error decompressing rar archive: {str(e)}")
