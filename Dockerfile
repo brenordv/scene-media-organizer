@@ -7,6 +7,7 @@ RUN apt-get update \
        libpq-dev \
        p7zip-full \
        ca-certificates \
+       rsync \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
