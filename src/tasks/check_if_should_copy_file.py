@@ -14,7 +14,7 @@ def check_should_copy_file(filename):
 
     path = Path(filename)
 
-    if path.suffix.lower() in _extensions_to_skip:
+    if path.suffix.lower().replace(".", "") in _extensions_to_skip:
         return False
 
     return True
