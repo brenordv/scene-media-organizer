@@ -41,11 +41,15 @@ def on_demand_batch():
 
     activity_tracker.info("Adapting paths for running locally...")
     for item in batch:
-        activity_tracker.debug(f"Old full_path: {item['full_path']}")
-        full_path = Path(_watch_folder) / Path(item['full_path']).relative_to(Path("/watch"))
-        item['full_path'] = str(full_path.resolve())
-        activity_tracker.debug(f"New full_path: {item['full_path']}")
-        item["parent"] = str(full_path.parent)
+        try:
+            activity_tracker.debug(f"Old full_path: {item['full_path']}")
+            full_path = Path(_watch_folder) / Path(item['full_path']).relative_to(Path("/watch"))
+            item['full_path'] = str(full_path.resolve())
+            activity_tracker.debug(f"New full_path: {item['full_path']}")
+            item["parent"] = str(full_path.parent)
+        except ValueError:
+            activity_tracker.debug(f"Seems like the file is already in the new location.")
+
 
         if item["target_path"] is None:
             activity_tracker.debug(f"No target path found for item [{item['id']}].")
@@ -53,15 +57,18 @@ def on_demand_batch():
 
         activity_tracker.debug(f"Old target_path: {item['target_path']}")
 
-        if "movies" in item['target_path'].lower():
-            target_path = Path(_movies_base_folder) / Path(item['target_path']).relative_to(Path("/movies"))
+        try:
+            if "movies" in item['target_path'].lower():
+                target_path = Path(_movies_base_folder) / Path(item['target_path']).relative_to(Path("/movies"))
+                item['target_path'] = str(target_path.resolve())
+                activity_tracker.debug(f"New target_path: {item['target_path']}")
+                continue
+
+            target_path = Path(_series_base_folder) / Path(item['target_path']).relative_to(Path("/series"))
             item['target_path'] = str(target_path.resolve())
             activity_tracker.debug(f"New target_path: {item['target_path']}")
-            continue
-
-        target_path = Path(_series_base_folder) / Path(item['target_path']).relative_to(Path("/series"))
-        item['target_path'] = str(target_path.resolve())
-        activity_tracker.debug(f"New target_path: {item['target_path']}")
+        except ValueError:
+            activity_tracker.debug(f"Seems like the file is already in the new location.")
 
     activity_tracker.info(f"Processing batch with id [{batch_id}]...")
 
