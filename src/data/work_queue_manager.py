@@ -223,6 +223,20 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    def filter_only_existing_filenames(self, filenames):
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    self._logger.debug(f"Checking database for filenames: {filenames}")
+                    select_query = """SELECT filename FROM work_queue WHERE filename = ANY(%s)"""
+                    cursor.execute(select_query, (filenames,))
+                    rows = cursor.fetchall()
+                    return rows
+        except psycopg2.Error as e:
+            error_message = f"Error checking database for filenames: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
     @staticmethod
     def _parse_work_item_row_to_object(row):
         return {

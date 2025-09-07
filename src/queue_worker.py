@@ -27,10 +27,10 @@ def queue_consumer():
             continue
 
         _activity_tracker.info(f"{tag} File created: {filename}")
-        _prepare_file_for_processing(filename)
+        prepare_file_for_processing(filename)
 
 
-def _prepare_file_for_processing(filename):
+def prepare_file_for_processing(filename):
     is_archive = is_compressed_file(filename)
     main_archive_file = is_main_archive_file(filename) if is_archive else False
     should_copy_file = check_should_copy_file(filename)
