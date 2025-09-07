@@ -228,7 +228,7 @@ class WorkQueueManager(BaseRepository):
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     self._logger.debug(f"Checking database for filenames: {filenames}")
-                    select_query = """SELECT filename FROM work_queue WHERE filename = ANY(%s)"""
+                    select_query = """SELECT distinct filename FROM work_queue WHERE filename = ANY(%s)"""
                     cursor.execute(select_query, (filenames,))
                     rows = cursor.fetchall()
                     return rows

@@ -97,6 +97,7 @@ def on_demand_process_missing_add():
     _activity_tracker.info(f"{tag} Found {len(existing_filenames)} existing files in the queue.")
 
     diff = len(filenames) - len(existing_filenames)
+
     if diff <= 0:
         _activity_tracker.info(f"{tag} No new files found to add to the queue.")
         return
