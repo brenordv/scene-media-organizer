@@ -1,4 +1,5 @@
 import os
+import subprocess
 import time
 from pathlib import Path
 import shutil
@@ -14,6 +15,7 @@ def copy_file(src_file, dst_path_str):
     max_retries = 5
     base_delay_seconds = 3
     change_ownership = to_bool_env("WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY", False)
+    copy_using_rsync = to_bool_env("WATCHDOG_COPY_USING_RSYNC", False)
     src_path = Path(src_file)
     dst_path = Path(dst_path_str)
 
@@ -30,7 +32,7 @@ def copy_file(src_file, dst_path_str):
         try:
             _logger.debug(f"Copying file [{src_path.name}] to [{dst_path}]")
 
-            shutil.copy2(src_file, dst_file)
+            _copy_file(src_file, dst_file, copy_using_rsync)
 
             if change_ownership:
                 # Will fail if the script is not run as root.
@@ -45,6 +47,32 @@ def copy_file(src_file, dst_path_str):
             time.sleep(delay_seconds)
 
     return False
+
+
+def _copy_file(src_file, dst_path_str, copy_using_rsync):
+    if copy_using_rsync:
+        cmd = [
+            "rsync",
+            "-a", "--info=progress2", "--human-readable",
+            "--partial", "--append-verify", "--stats",
+            "--xattrs", "--acls",
+            src_file, dst_path_str
+        ]
+        # Stream output so you can mirror to your logger
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as p:
+            for line in p.stdout:
+                _logger.debug(line.rstrip())  # or _logger.debug(line.rstrip())
+
+            exit_code = p.wait()
+            success = exit_code == 0
+
+            _logger.debug(f"rsync exit code: {exit_code} / Sucess: {success}")
+            if not success:
+                raise Exception("Failed to copy file using rsync")
+
+    else:
+        shutil.copy(src_file, dst_path_str)
+
 
 
 def _change_destination_ownership(dst_file, src_file):

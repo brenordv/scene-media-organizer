@@ -100,7 +100,7 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
-    def get_next_batch(self, batch_id):
+    def get_next_batch(self, batch_id = None, force_new_batch = False):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -108,7 +108,7 @@ class WorkQueueManager(BaseRepository):
                     cursor.execute(select_query)
                     row = cursor.fetchone()
 
-                    if row is not None:
+                    if row is not None and not force_new_batch:
                         self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
                         return [], batch_id
 

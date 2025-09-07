@@ -32,7 +32,7 @@ def batch_processor():
         if batch is not None and len(batch) > 0:
             _activity_tracker.info(f"{tag} 🦇 NEW BATCH FOUND! Working on [{current_batch_id}]!")
 
-            _process_batch(batch, current_batch_id)
+            process_batch(batch, current_batch_id)
 
             _activity_tracker.info(f"{tag} 🎉 BATCH PROCESSING DONE! Batch id: {current_batch_id}...")
             current_batch_id = None
@@ -40,7 +40,7 @@ def batch_processor():
         time.sleep(10)
 
 
-def _process_batch(batch, current_batch_id):
+def process_batch(batch, current_batch_id):
     tag = f"[B.ID: {current_batch_id}]"
     try_again = []
 
