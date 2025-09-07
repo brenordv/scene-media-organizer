@@ -161,19 +161,24 @@ class WorkQueueManager(BaseRepository):
     def move_working_items_back_to_pending(self, batch_id):
         try:
             if batch_id is None:
-                self._logger.error("No batch id provided. Skipping moving working items back to pending...")
-                return
+                self._logger.warning("No batch id provided. Moving all working items back to pending...")
 
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     self._logger.debug(f"[Batch ID: {batch_id}] Moving working items back to pending so the next back end can process them...")
                     # TODO: Add attempt control, otherwise we might end up retrying impossibly wrong items forever.
+
                     update_query = """UPDATE work_queue
-                                      SET status = 'PENDING',
+                                      SET status      = 'PENDING',
                                           modified_at = CURRENT_TIMESTAMP
-                                      WHERE status = 'WORKING'
-                                        AND id IN ( SELECT work_queue_id FROM batch_control WHERE batch_id = %s )"""
-                    cursor.execute(update_query, (batch_id,))
+                                      WHERE status = 'WORKING'"""
+
+                    if batch_id is not None:
+                        update_query += """ AND id IN ( SELECT work_queue_id FROM batch_control WHERE batch_id = %s )"""
+                        cursor.execute(update_query, (batch_id,))
+                    else:
+                        cursor.execute(update_query)
+
                     conn.commit()
 
         except psycopg2.Error as e:

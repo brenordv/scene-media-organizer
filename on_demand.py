@@ -18,6 +18,9 @@ _notification_agent = NotificationRepository(client_id="smo-watchdog-notificatio
 def on_demand_batch():
     activity_tracker = ActivityTracker("On Demand: Batch")
 
+    activity_tracker.info("Moving files back to PENDING.")
+    _work_queue_manager.move_working_items_back_to_pending(batch_id=None)
+
     activity_tracker.info("Forcing a new batch to be processed.")
     batch, batch_id = _work_queue_manager.get_next_batch(force_new_batch=True)
 
