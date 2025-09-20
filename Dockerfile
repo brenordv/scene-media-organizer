@@ -1,16 +1,23 @@
 FROM python:3.13-slim
 
-# System packages required by the app and some Python wheels (psycopg2), plus unrar
+# Install system packages required by the app and some Python wheels (psycopg2), plus unrar
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential \
        libpq-dev \
-       p7zip-full \
        ca-certificates \
+       curl \
+       tar \
+       xz-utils \
        rsync \
+       unrar \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Install latest 7-Zip (7zz) from GitHub release
+# Pin version here (25.01) so builds are reproducible
+RUN curl -L https://github.com/ip7z/7zip/releases/download/25.01/7z2501-linux-x64.tar.xz \
+    | tar -xJ -C /usr/local/bin --strip-components=1 7z2501-linux-x64/7zz 7z2501-linux-x64/7zzs \
+    && chmod +x /usr/local/bin/7zz /usr/local/bin/7zzs
 
 # Improve Python behavior in containers
 ENV PYTHONDONTWRITEBYTECODE=1 \

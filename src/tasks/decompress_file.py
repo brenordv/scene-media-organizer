@@ -9,7 +9,7 @@ from pathlib import Path
 
 from simple_log_factory.log_factory import log_factory
 
-_unrar_path = os.environ.get('UNRAR_PATH', '7z')
+_unrar_path = os.environ.get('UNRAR_PATH', '7zz')
 _logger = log_factory("Decompress File", unique_handler_types=True)
 
 
