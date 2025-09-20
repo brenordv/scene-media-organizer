@@ -15,8 +15,10 @@ RUN apt-get update \
 # Install latest 7-Zip (7zz) from GitHub release
 # Pin version here (25.01) so builds are reproducible
 RUN curl -L https://github.com/ip7z/7zip/releases/download/25.01/7z2501-linux-x64.tar.xz \
-    | tar -xJ -C /usr/local/bin --strip-components=1 7z2501-linux-x64/7zz 7z2501-linux-x64/7zzs \
-    && chmod +x /usr/local/bin/7zz /usr/local/bin/7zzs
+    | tar -xJ -C /tmp \
+ && mv /tmp/7zz /usr/local/bin/ \
+ && mv /tmp/7zzs /usr/local/bin/ \
+ && chmod +x /usr/local/bin/7zz /usr/local/bin/7zzs
 
 # Improve Python behavior in containers
 ENV PYTHONDONTWRITEBYTECODE=1 \
