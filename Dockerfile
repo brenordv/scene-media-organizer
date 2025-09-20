@@ -10,7 +10,6 @@ RUN apt-get update \
        tar \
        xz-utils \
        rsync \
-       unrar \
     && rm -rf /var/lib/apt/lists/*
 
 # Install latest 7-Zip (7zz) from GitHub release
