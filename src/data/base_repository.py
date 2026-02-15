@@ -1,8 +1,8 @@
 import os
 from contextlib import contextmanager
 from psycopg2.pool import SimpleConnectionPool
-from simple_log_factory.log_factory import log_factory
 
+from src.utils import get_otel_log_handler
 
 _db_pool = SimpleConnectionPool(
     minconn = 1,
@@ -16,7 +16,7 @@ _db_pool = SimpleConnectionPool(
 
 class BaseRepository:
     def __init__(self, log_name: str, log_level: str = "DEBUG"):
-        self._logger = log_factory(log_name, unique_handler_types=True, log_level=log_level)
+        self._logger = get_otel_log_handler(log_name, unique_handler_types=True, log_level=log_level)
         self._ensure_table_exists()
 
     @contextmanager

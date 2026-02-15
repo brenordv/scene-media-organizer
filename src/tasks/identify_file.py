@@ -1,9 +1,11 @@
 import os
 import requests
-from simple_log_factory.log_factory import log_factory
+
+
+from src.utils import get_otel_log_handler
 
 _url = os.environ.get('API_URL')
-_logger = log_factory("Identify File", unique_handler_types=True)
+_logger = get_otel_log_handler("Identify File", unique_handler_types=True)
 
 def identify_file(full_path: str):
     response = requests.get(_url, params={'it': full_path})

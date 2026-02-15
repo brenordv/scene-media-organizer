@@ -7,10 +7,11 @@ import bz2
 import lzma
 from pathlib import Path
 
-from simple_log_factory.log_factory import log_factory
+
+from src.utils import get_otel_log_handler
 
 _unrar_path = os.environ.get('UNRAR_PATH', '7zz')
-_logger = log_factory("Decompress File", unique_handler_types=True)
+_logger = get_otel_log_handler("Decompress File", unique_handler_types=True)
 
 
 def decompress_file(file_path):

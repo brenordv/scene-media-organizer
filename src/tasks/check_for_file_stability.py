@@ -1,9 +1,10 @@
 import os
 import time
 
-from simple_log_factory.log_factory import log_factory
 
-_logger = log_factory("Check File Stability", unique_handler_types=True)
+from src.utils import get_otel_log_handler
+
+_logger = get_otel_log_handler("Check File Stability", unique_handler_types=True)
 
 def check_is_file_stable(filename):
     # by default, we wait 3 minutes for the file to become stable, checking every 6 seconds

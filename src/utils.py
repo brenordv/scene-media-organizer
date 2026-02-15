@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+from simple_log_factory_ext_otel import otel_log_factory, TracedLogger
+
 
 def to_int(value: Optional[Union[str, int]], default: int) -> int:
     try:
@@ -33,3 +35,18 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b''):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
+    otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+    if not otel_endpoint:
+        raise ValueError("OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set.")
+
+    service_name = "scene-media-organizer"
+
+    return otel_log_factory(
+        service_name=service_name,
+        log_name=log_name,
+        otel_exporter_endpoint=otel_endpoint,
+        **kwargs
+    )

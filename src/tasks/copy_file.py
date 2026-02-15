@@ -4,11 +4,9 @@ import time
 from pathlib import Path
 import shutil
 
-from simple_log_factory.log_factory import log_factory
+from src.utils import to_bool_env, get_otel_log_handler
 
-from src.utils import to_bool_env
-
-_logger = log_factory("Copy File", unique_handler_types=True)
+_logger = get_otel_log_handler("Copy File", unique_handler_types=True)
 
 
 def copy_file(src_file, dst_path_str):
