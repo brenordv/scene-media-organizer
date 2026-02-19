@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venvScriptspython.exe -m pip install -e \".[dev]\")",
+      "Bash(.venv/Scripts/python.exe -m pip install:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(uv pip install:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m black:*)",
+      "Bash(python -m isort:*)",
+      "Bash(python -m ruff check:*)",
+      "Bash(python -m mypy:*)",
+      "Bash(if exist nul del /f nul)",
+      "Bash(python -c:*)",
+      "Bash(pip install:*)",
+      "Bash(.venvScriptspip install -e \".[dev]\")",
+      "Bash(\".venv/Scripts/pip.exe\" install -e \".[dev]\")",
+      "Bash(ls:*)",
+      "Bash(python -m build:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)"
+    ]
+  }
+}
