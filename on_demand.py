@@ -3,12 +3,14 @@ load_dotenv()
 
 import os
 import sys
+from pathlib import Path
 
 from src.batch_processor import process_batch
 from src.data.activity_logger import ActivityTracker
 from src.data.notification_repository import NotificationRepository
 from src.data.work_queue_manager import WorkQueueManager
 from src.queue_worker import prepare_file_for_processing
+from src.utils import flush_all_otel_loggers
 
 _work_queue_manager = WorkQueueManager()
 _watch_folder = os.environ.get('WATCH_FOLDER')
@@ -16,14 +18,6 @@ _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
 _series_base_folder = os.environ.get('SERIES_BASE_FOLDER')
 _notification_agent = NotificationRepository(client_id="smo-watchdog-notification-sender")
 _activity_tracker = ActivityTracker("On Demand")
-
-from pathlib import Path
-
-old_path = Path("/old/root/folder/subdir/file.txt")
-old_root = Path("/old/root/folder")
-new_root = Path("/new/root/folder")
-
-new_path = new_root / old_path.relative_to(old_root)
 
 
 def on_demand_batch():
@@ -139,4 +133,7 @@ def main():
 
 
 if __name__ == '__main__':
+    print("Flushing buffered OTEL log records before starting.")
+    flush_all_otel_loggers()
+
     main()

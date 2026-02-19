@@ -5,6 +5,8 @@ from typing import Optional, Union
 
 from simple_log_factory_ext_otel import otel_log_factory, TracedLogger
 
+_all_loggers: dict[str, TracedLogger] = {}
+
 
 def to_int(value: Optional[Union[str, int]], default: int) -> int:
     try:
@@ -37,16 +39,39 @@ def _sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
+    cached = _all_loggers.get(log_name)
+    if cached is not None:
+        return cached
+
     otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
 
     if not otel_endpoint:
-        raise ValueError("OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set.")
+        raise ValueError(
+            "OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set."
+        )
 
     service_name = "scene-media-organizer"
 
-    return otel_log_factory(
+    traced = otel_log_factory(
         service_name=service_name,
         log_name=log_name,
         otel_exporter_endpoint=otel_endpoint,
-        **kwargs
+        instrument_db={"psycopg2": {"enable_commenter": True}},
+        **kwargs,
     )
+
+    _all_loggers[log_name] = traced
+
+    return traced
+
+
+def flush_all_otel_loggers() -> None:
+    """Flush every OtelLogHandler created via get_otel_log_handler().
+
+    Must be called before blocking event loops on Windows to drain all
+    BatchLogRecordProcessor queues and avoid a deadlock between
+    the batch-export background threads and event loop init.
+    """
+    for traced in _all_loggers.values():
+        for h in traced.logger.handlers:
+            h.flush()

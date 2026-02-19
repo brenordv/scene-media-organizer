@@ -3,6 +3,7 @@ import html
 from pathlib import Path
 from typing import Any, Dict, List
 
+from opentelemetry import trace
 from raccoontools.shared.serializer import obj_dump_deserializer
 
 from src.data.activity_logger import ActivityTracker
@@ -281,7 +282,12 @@ def _split_messages_to_prevent_message_too_long_error(message):
     flush(buffer)
     return chunks
 
+@_activity_logger.trace("_handle_notification")
 def _handle_notification(topic, payload_bytes):
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("mqtt.topic", str(topic))
+
     preview = payload_bytes[:256]
     _activity_logger.debug(f"Message on '{topic}': {preview}")
 
@@ -290,12 +296,17 @@ def _handle_notification(topic, payload_bytes):
     verification_details = payload.get("verification_details", {})
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
-    message = _compose_notification_message(insights, summary, batch_verified, verification_details)
+    message = _compose_notification_message(
+        insights, summary, batch_verified, verification_details
+    )
     messages = _split_messages_to_prevent_message_too_long_error(message)
 
     for msg in messages:
         send_telegram_message(msg)
 
+
 def handle_notification_messages():
     _activity_logger.debug("Starting to listen for notification messages...")
-    _notification_agent.start_reading(message_handler=_handle_notification, background=False)
+    _notification_agent.start_reading(
+        message_handler=_handle_notification, background=False
+    )

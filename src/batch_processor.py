@@ -2,6 +2,8 @@ import os
 import time
 from pathlib import Path
 
+from opentelemetry import trace
+
 from src.data.activity_logger import ActivityTracker
 from src.data.notification_repository import NotificationRepository
 from src.tasks.check_for_file_stability import check_is_file_stable
@@ -27,20 +29,34 @@ def batch_processor():
     tag = "[BATCH PROCESSOR]"
     current_batch_id = None
     while True:
-        batch, current_batch_id = _work_queue_manager.get_next_batch(batch_id=current_batch_id)
+        batch, current_batch_id = _work_queue_manager.get_next_batch(
+            batch_id=current_batch_id
+        )
 
         if batch is not None and len(batch) > 0:
-            _activity_tracker.info(f"{tag} 🦇 NEW BATCH FOUND! Working on [{current_batch_id}]!")
+            _activity_tracker.info(
+                f"{tag} NEW BATCH FOUND! Working on [{current_batch_id}]!"
+            )
 
             process_batch(batch, current_batch_id)
 
-            _activity_tracker.info(f"{tag} 🎉 BATCH PROCESSING DONE! Batch id: {current_batch_id}...")
+            _activity_tracker.info(
+                f"{tag} BATCH PROCESSING DONE! Batch id: {current_batch_id}..."
+            )
             current_batch_id = None
 
         time.sleep(10)
 
 
+@_activity_tracker.trace("process_batch")
 def process_batch(batch, current_batch_id):
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attributes({
+            "batch.id": str(current_batch_id),
+            "batch.items_count": len(batch),
+        })
+
     tag = f"[B.ID: {current_batch_id}]"
     try_again = []
 
@@ -88,11 +104,20 @@ def process_batch(batch, current_batch_id):
         _activity_tracker.error(f"{tag} Error sending batch completion notification: {str(e)}")
 
 
+@_activity_tracker.trace("_process_batch_item")
 def _process_batch_item(item):
+    span = trace.get_current_span()
     item_id = item['id']
     full_path = item['full_path']
     full_path_obj = Path(full_path)
     tag = f"[I.ID: {item_id}]"
+
+    if span.is_recording():
+        span.set_attributes({
+            "work_item.id": str(item_id),
+            "file.path": full_path,
+            "file.name": full_path_obj.name,
+        })
 
     _activity_tracker.debug(f"{tag} Processing item {full_path}. Checking if file is stable...")
     is_file_stable = check_is_file_stable(full_path)

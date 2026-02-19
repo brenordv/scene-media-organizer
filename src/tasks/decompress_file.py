@@ -7,6 +7,7 @@ import bz2
 import lzma
 from pathlib import Path
 
+from opentelemetry import trace
 
 from src.utils import get_otel_log_handler
 
@@ -14,14 +15,25 @@ _unrar_path = os.environ.get('UNRAR_PATH', '7zz')
 _logger = get_otel_log_handler("Decompress File", unique_handler_types=True)
 
 
+@_logger.trace("decompress_file")
 def decompress_file(file_path):
+    span = trace.get_current_span()
     path = Path(file_path)
+
+    if span.is_recording():
+        span.set_attributes({
+            "file.path": str(file_path),
+            "file.name": path.name,
+        })
 
     if not path.exists() or not path.is_file():
         return False
 
     extract_dir = path.parent
     suffix = path.suffix.lower()
+
+    if span.is_recording():
+        span.set_attribute("archive.type", suffix.lstrip("."))
 
     try:
         if suffix == '.7z':
@@ -56,7 +68,9 @@ def decompress_file(file_path):
                 _logger.error(f"Error decompressing zip archive: {str(e)}")
                 return False
 
-        elif suffix in ['.tar', '.tgz'] or path.name.endswith(('.tar.gz', '.tar.bz2', '.tar.xz')):
+        elif suffix in ['.tar', '.tgz'] or path.name.endswith(
+            ('.tar.gz', '.tar.bz2', '.tar.xz')
+        ):
             _logger.debug("Trying to decompress a tar archive...")
             try:
                 with tarfile.open(path, 'r:*') as tar_ref:
@@ -76,14 +90,19 @@ def decompress_file(file_path):
             return _decompress_native(path, lzma, 'lzma', extract_dir / path.stem)
 
         else:
-            # Unsupported archive format
             return False
 
     except Exception as e:
         _logger.error(f"Unexpected error decompressing file: {str(e)}")
         return False
 
+
+@_logger.trace("_decompress_native")
 def _decompress_native(path, engine, archive_type, output_path):
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute("archive.type", archive_type)
+
     _logger.debug(f"Trying to decompress a {archive_type} archive...")
     try:
         with engine.open(path, 'rb') as file:

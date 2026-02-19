@@ -1,7 +1,9 @@
 import json
 import os
 from typing import Callable, Optional, Sequence, Tuple, Union
+
 import paho.mqtt.client as mqtt
+from opentelemetry import trace
 from paho.mqtt.client import error_string as mqtt_error_string
 
 from raccoontools.shared.serializer import obj_dump_serializer
@@ -77,26 +79,48 @@ class NotificationRepository:
         qos: int = 1,
         retain: bool = False,
     ) -> None:
+        tracer = trace.get_tracer(__name__)
         target_topic = (topic or self._base_topic).strip()
-        if not target_topic:
-            raise ValueError("Topic must be provided either via constructor base_topic or the 'topic' argument")
 
-        if isinstance(message, dict):
-            payload: Union[str, bytes] = json.dumps(message, default=obj_dump_serializer)
-        elif isinstance(message, (str, bytes)):
-            payload = message
-        else:
-            raise TypeError("message must be str, bytes, or dict")
+        with tracer.start_as_current_span("NotificationRepository.post_message") as span:
+            if span.is_recording():
+                span.set_attributes({
+                    "mqtt.topic": target_topic,
+                    "mqtt.qos": qos,
+                    "mqtt.retain": retain,
+                    "mqtt.broker_host": self._broker_host,
+                })
 
-        if not self._is_connected:
-            self._connect_if_needed()
-            self._ensure_background_loop()
+            if not target_topic:
+                raise ValueError(
+                    "Topic must be provided either via constructor "
+                    "base_topic or the 'topic' argument"
+                )
 
-        result = self._client.publish(target_topic, payload=payload, qos=qos, retain=retain)
-        if result.rc != mqtt.MQTT_ERR_SUCCESS:
-            self._logger.error(f"Failed to publish to '{target_topic}': rc={result.rc}")
-        else:
-            self._logger.debug(f"Published to '{target_topic}' (qos={qos}, retain={retain})")
+            if isinstance(message, dict):
+                payload: Union[str, bytes] = json.dumps(
+                    message, default=obj_dump_serializer
+                )
+            elif isinstance(message, (str, bytes)):
+                payload = message
+            else:
+                raise TypeError("message must be str, bytes, or dict")
+
+            if not self._is_connected:
+                self._connect_if_needed()
+                self._ensure_background_loop()
+
+            result = self._client.publish(
+                target_topic, payload=payload, qos=qos, retain=retain
+            )
+            if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                self._logger.error(
+                    f"Failed to publish to '{target_topic}': rc={result.rc}"
+                )
+            else:
+                self._logger.debug(
+                    f"Published to '{target_topic}' (qos={qos}, retain={retain})"
+                )
 
     def start_reading(
         self,
@@ -152,14 +176,29 @@ class NotificationRepository:
     def _connect_if_needed(self) -> None:
         if self._is_connected:
             return
-        try:
-            self._logger.debug(
-                f"Connecting to MQTT broker {self._broker_host}:{self._broker_port} (keepalive={self._keepalive_seconds})"
-            )
-            self._client.connect(self._broker_host, self._broker_port, keepalive=self._keepalive_seconds)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            self._logger.error(f"Error connecting to MQTT broker: {exc}")
-            raise
+
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("NotificationRepository._connect") as span:
+            if span.is_recording():
+                span.set_attributes({
+                    "mqtt.broker_host": self._broker_host,
+                    "mqtt.broker_port": self._broker_port,
+                })
+
+            try:
+                self._logger.debug(
+                    f"Connecting to MQTT broker "
+                    f"{self._broker_host}:{self._broker_port} "
+                    f"(keepalive={self._keepalive_seconds})"
+                )
+                self._client.connect(
+                    self._broker_host,
+                    self._broker_port,
+                    keepalive=self._keepalive_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._logger.error(f"Error connecting to MQTT broker: {exc}")
+                raise
 
     def _ensure_background_loop(self) -> None:
         if getattr(self, "_loop_running", False):

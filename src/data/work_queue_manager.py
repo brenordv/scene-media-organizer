@@ -1,5 +1,7 @@
 import uuid
+
 import psycopg2
+from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
 from src.data.base_repository import BaseRepository
@@ -53,11 +55,22 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.add_to_queue")
     def add_to_queue(self, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes({
+                "db.table": "work_queue",
+                "db.operation": "insert",
+                "file.path": str(full_path),
+                "file.name": str(filename),
+                "queue.status": str(status),
+            })
+
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    insert_query = """INSERT INTO work_queue (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id) 
+                    insert_query = """INSERT INTO work_queue (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id)
                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                       returning id"""
                     cursor.execute(insert_query, (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id))
@@ -72,7 +85,17 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.update")
     def update(self, work_item):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes({
+                "db.table": "work_queue",
+                "db.operation": "update",
+                "work_item.id": str(work_item.get('id', '')),
+                "work_item.status": str(work_item.get('status', '')),
+            })
+
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -100,7 +123,17 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
-    def get_next_batch(self, batch_id = None, force_new_batch = False):
+    @_activity_tracker.trace("WorkQueueManager.get_next_batch")
+    def get_next_batch(self, batch_id=None, force_new_batch=False):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes({
+                "db.table": "work_queue",
+                "db.operation": "select_and_update",
+                "batch.id": str(batch_id or ""),
+                "batch.force_new": force_new_batch,
+            })
+
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -144,7 +177,16 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.set_batch_as_done")
     def set_batch_as_done(self, batch_id):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes({
+                "db.table": "batch_control",
+                "db.operation": "update",
+                "batch.id": str(batch_id),
+            })
+
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -158,7 +200,16 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.move_working_items_back_to_pending")
     def move_working_items_back_to_pending(self, batch_id):
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes({
+                "db.table": "work_queue",
+                "db.operation": "update",
+                "batch.id": str(batch_id or ""),
+            })
+
         try:
             if batch_id is None:
                 self._logger.warning("No batch id provided. Moving all working items back to pending...")
@@ -186,6 +237,7 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.get_batch_data")
     def get_batch_data(self, batch_id):
         try:
             with self._get_connection() as conn:
@@ -206,6 +258,7 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.update_batch_verification")
     def update_batch_verification(self, batch_id, verified):
         try:
             with self._get_connection() as conn:
@@ -223,6 +276,7 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.filter_only_existing_filenames")
     def filter_only_existing_filenames(self, filenames):
         try:
             with self._get_connection() as conn:

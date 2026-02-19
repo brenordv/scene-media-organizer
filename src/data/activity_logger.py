@@ -1,4 +1,5 @@
 import psycopg2
+from opentelemetry import trace
 
 from src.data.base_repository import BaseRepository
 
@@ -36,6 +37,10 @@ class ActivityTracker(BaseRepository):
 
             self._log_control[log_level] = value >= level
 
+    def trace(self, span_name: str):
+        """Delegate tracing to the underlying TracedLogger."""
+        return self._logger.trace(span_name)
+
     def _ensure_table_exists(self):
         try:
             with self._get_connection() as conn:
@@ -43,7 +48,9 @@ class ActivityTracker(BaseRepository):
                     self._logger.debug("Enabling uuid-ossp extension")
                     cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
 
-                    self._logger.debug("Creating activity_tracker table if it does not exist")
+                    self._logger.debug(
+                        "Creating activity_tracker table if it does not exist"
+                    )
                     create_table_query = """
                                          CREATE TABLE IF NOT EXISTS activity_tracker
                                          (
@@ -63,17 +70,28 @@ class ActivityTracker(BaseRepository):
         if not self._log_control[log_level]:
             return
 
-        try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    insert_query = "INSERT INTO activity_tracker (activity) VALUES (%s)"
-                    cursor.execute(insert_query, (activity,))
-                    conn.commit()
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("ActivityTracker.log_activity") as span:
+            if span.is_recording():
+                span.set_attributes({
+                    "db.table": "activity_tracker",
+                    "db.operation": "insert",
+                    "log.level": log_level,
+                })
 
-        except psycopg2.Error as e:
-            error_message = f"Error logging activity: {str(e)}"
-            self._logger.error(error_message)
-            raise RuntimeError(error_message) from e
+            try:
+                with self._get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        insert_query = (
+                            "INSERT INTO activity_tracker (activity) VALUES (%s)"
+                        )
+                        cursor.execute(insert_query, (activity,))
+                        conn.commit()
+
+            except psycopg2.Error as e:
+                error_message = f"Error logging activity: {str(e)}"
+                self._logger.error(error_message)
+                raise RuntimeError(error_message) from e
 
     def debug(self, activity):
         self._logger.debug(activity)

@@ -1,17 +1,22 @@
 import requests
+from opentelemetry import trace
+
 from src.data.activity_logger import ActivityTracker
 from src.utils import get_env, to_bool_env
 
 _activity_logger = ActivityTracker("Send Telegram Message")
 
 
+@_activity_logger.trace("send_telegram_message")
 def send_telegram_message(message: str) -> bool:
+    span = trace.get_current_span()
     token = get_env("TELEGRAM_BOT_TOKEN")
     chat_id = get_env("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
         _activity_logger.error(
-            "Missing Telegram configuration. Ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set."
+            "Missing Telegram configuration. "
+            "Ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set."
         )
         return False
 
@@ -25,12 +30,15 @@ def send_telegram_message(message: str) -> bool:
         "text": message,
         "disable_web_page_preview": to_bool_env("TELEGRAM_DISABLE_WEB_PREVIEW", True),
         "disable_notification": to_bool_env("TELEGRAM_DISABLE_NOTIFICATION", False),
-        "parse_mode": parse_mode
+        "parse_mode": parse_mode,
     }
 
     try:
         _activity_logger.debug(f"Sending Telegram message to chat_id={chat_id}")
         response = requests.post(url, json=payload, timeout=10)
+
+        if span.is_recording():
+            span.set_attribute("http.status_code", response.status_code)
 
         if not response.ok:
             _activity_logger.error(

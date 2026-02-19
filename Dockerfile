@@ -42,7 +42,8 @@ ENV WATCH_FOLDER="" \
     TELEGRAM_PARSE_MODE="HTML" \
     TELEGRAM_DISABLE_WEB_PREVIEW="false" \
     TELEGRAM_DISABLE_NOTIFICATION="false" \
-    WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY="false"
+    WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY="false" \
+    OTEL_EXPORTER_OTLP_ENDPOINT=""
 
 # Install Python dependencies first (better layer caching)
 COPY requirements.txt ./

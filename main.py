@@ -4,16 +4,20 @@ load_dotenv()
 import threading
 import os
 import time
+
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
 from src.data.activity_logger import ActivityTracker
 from src.batch_processor import batch_processor
 from src.queue_worker import add_to_queue, queue_consumer
 from src.data.work_queue_manager import WorkQueueManager
 from src.notification_receiver import handle_notification_messages
+from src.utils import flush_all_otel_loggers
 
 _work_queue_manager = WorkQueueManager()
 _activity_logger = ActivityTracker("SMO-Watchdog")
+
 
 class MyHandler(FileSystemEventHandler):
     def on_created(self, event):
@@ -35,7 +39,6 @@ def main():
 
     try:
         while True:
-            # I could use this as a tick type of thing.
             time.sleep(60)
     except KeyboardInterrupt:
         observer.stop()
@@ -44,4 +47,13 @@ def main():
 
 
 if __name__ == '__main__':
+    # Flush ALL OTEL log handlers before starting the main loop.
+    # On Windows the BatchLogRecordProcessor's background HTTP export
+    # can deadlock with event loop initialisation if both run
+    # concurrently. Every TracedLogger has its own
+    # BatchLogRecordProcessor; we must drain them all.
+    print("Flushing buffered OTEL log records before starting.")
+    flush_all_otel_loggers()
+
+    print("Starting scene-media-organizer watchdog.")
     main()
