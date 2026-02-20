@@ -4,7 +4,7 @@ watchdog == 6.0.0
 rarfile == 4.2
 py7zr == 1.1.2
 simple-log-factory == 1.0.0
-simple-log-factory-ext-otel == 1.4.0rc2
+simple-log-factory-ext-otel[requests, psycopg2] == 1.5.0rc1
 python-dotenv == 1.2.1
 pillow == 12.1.1
 paho-mqtt == 2.1.0

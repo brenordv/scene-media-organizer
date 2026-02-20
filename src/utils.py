@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
-from simple_log_factory_ext_otel import otel_log_factory, TracedLogger
+from simple_log_factory_ext_otel import otel_log_factory, TracedLogger, instrument_requests
 
 _all_loggers: dict[str, TracedLogger] = {}
 
@@ -57,6 +57,7 @@ def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
         log_name=log_name,
         otel_exporter_endpoint=otel_endpoint,
         instrument_db={"psycopg2": {"enable_commenter": True}},
+        instrument_requests=True,
         **kwargs,
     )
 
