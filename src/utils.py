@@ -50,7 +50,7 @@ def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
             "OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set."
         )
 
-    service_name = "scene-media-organizer"
+    service_name = "media-organizer"
 
     traced = otel_log_factory(
         service_name=service_name,
