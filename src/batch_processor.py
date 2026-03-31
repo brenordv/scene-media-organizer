@@ -13,6 +13,7 @@ from src.tasks.identify_file import identify_file
 from src.tasks.sanitize_string_for_filename import sanitize_string_for_filename
 from src.data.work_queue_manager import WorkQueueManager
 from src.tasks.verify_batch_data import verify_batch_data
+from src.utils import release_idle_memory
 
 _work_queue_manager = WorkQueueManager()
 _movies_base_folder = os.environ.get('MOVIES_BASE_FOLDER')
@@ -28,12 +29,14 @@ if _series_base_folder is None or _movies_base_folder is None:
 def batch_processor():
     tag = "[BATCH PROCESSOR]"
     current_batch_id = None
+    idle_cycles = 0
     while True:
         batch, current_batch_id = _work_queue_manager.get_next_batch(
             batch_id=current_batch_id
         )
 
         if batch is not None and len(batch) > 0:
+            idle_cycles = 0
             _activity_tracker.info(
                 f"{tag} NEW BATCH FOUND! Working on [{current_batch_id}]!"
             )
@@ -44,6 +47,11 @@ def batch_processor():
                 f"{tag} BATCH PROCESSING DONE! Batch id: {current_batch_id}..."
             )
             current_batch_id = None
+            release_idle_memory()
+        else:
+            idle_cycles += 1
+            if idle_cycles % 6 == 0:  # ~every 60s of idle polling
+                release_idle_memory()
 
         time.sleep(10)
 

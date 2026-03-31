@@ -1,4 +1,7 @@
+import ctypes
+import gc
 import hashlib
+import logging
 import os
 from pathlib import Path
 from typing import Optional, Union
@@ -6,6 +9,19 @@ from typing import Optional, Union
 from simple_log_factory_ext_otel import otel_log_factory, TracedLogger, instrument_requests
 
 _all_loggers: dict[str, TracedLogger] = {}
+_log = logging.getLogger(__name__)
+
+# Resolve malloc_trim once at import time.
+# Available on glibc (Debian/python:*-slim); silently absent elsewhere.
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+    _malloc_trim = _libc.malloc_trim
+    _malloc_trim.argtypes = [ctypes.c_int]
+    _malloc_trim.restype = ctypes.c_int
+except OSError:
+    _malloc_trim = None
+    _log.info("malloc_trim unavailable (non-glibc platform); "
+              "idle memory release will use gc.collect() only.")
 
 
 def to_int(value: Optional[Union[str, int]], default: int) -> int:
@@ -64,6 +80,26 @@ def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
     _all_loggers[log_name] = traced
 
     return traced
+
+
+def release_idle_memory() -> None:
+    """Force garbage collection and return freed heap pages to the OS.
+
+    Intended to be called during idle periods (no batches to process)
+    to reduce the resident memory footprint of the process.
+    """
+    try:
+        collected = gc.collect()
+        if collected > 0:
+            _log.debug("gc.collect() reclaimed %d objects.", collected)
+
+        if _malloc_trim is not None:
+            result = _malloc_trim(0)
+            if result == 0:
+                _log.debug("malloc_trim(0) returned 0 — "
+                           "no memory could be released to the OS.")
+    except Exception as e:
+        _log.exception(f"Unexpected error during idle memory release. Error: {e}")
 
 
 def flush_all_otel_loggers() -> None:
