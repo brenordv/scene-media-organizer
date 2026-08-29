@@ -1,16 +1,43 @@
-from dotenv import load_dotenv
-load_dotenv()
-
+import argparse
 import os
 import sys
 from pathlib import Path
 
-from src.batch_processor import process_batch
-from src.data.activity_logger import ActivityTracker
-from src.data.notification_repository import NotificationRepository
-from src.data.work_queue_manager import WorkQueueManager
-from src.queue_worker import prepare_file_for_processing
-from src.utils import flush_all_otel_loggers
+from src.config import add_config_arguments, apply_config, require_env
+
+
+def _parse_args(argv):
+    parser = argparse.ArgumentParser(
+        description="Run scene-media-organizer maintenance commands.")
+    parser.add_argument("command", choices=["batch", "missing"],
+                        help="batch: process all pending items. "
+                             "missing: queue files present on disk but absent from the queue, then process.")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="Skip the confirmation prompt (for non-interactive runs).")
+    add_config_arguments(parser)
+    return parser.parse_args(argv)
+
+
+_args = _parse_args(sys.argv[1:])
+apply_config(_args)
+require_env(
+    "WATCH_FOLDER", "MOVIES_BASE_FOLDER", "SERIES_BASE_FOLDER",
+    "POSTGRES_HOST", "API_URL", "MQTT_HOST", "OTEL_EXPORTER_OTLP_ENDPOINT",
+)
+
+from src.data.db import init_pool, shutdown_pool  # noqa: E402
+
+init_pool()
+
+# Imports below this line intentionally run after configuration is applied,
+# because these modules read the environment at import time.
+from src.batch_processor import process_batch  # noqa: E402
+from src.data.activity_logger import ActivityTracker  # noqa: E402
+from src.data.notification_repository import NotificationRepository  # noqa: E402
+from src.data.work_queue_manager import WorkQueueManager  # noqa: E402
+from src.helpers import select_new_files  # noqa: E402
+from src.queue_worker import prepare_file_for_processing  # noqa: E402
+from src.utils import flush_all_otel_loggers  # noqa: E402
 
 _work_queue_manager = WorkQueueManager()
 _watch_folder = os.environ.get('WATCH_FOLDER')
@@ -90,15 +117,13 @@ def on_demand_process_missing_add():
 
     _activity_tracker.info(f"{tag} Found {len(existing_filenames)} existing files in the queue.")
 
-    diff = len(filenames) - len(existing_filenames)
-
-    if diff <= 0:
+    new_files = select_new_files(files_found, existing_filenames)
+    if not new_files:
         _activity_tracker.info(f"{tag} No new files found to add to the queue.")
         return
 
-    _activity_tracker.info(f"{tag} Found {diff} new files to add to the queue.")
+    _activity_tracker.info(f"{tag} Found {len(new_files)} new files to add to the queue.")
 
-    new_files = [f[0] for f in files_found if f[1] not in existing_filenames]
     for new_file in new_files:
         _activity_tracker.debug(f"{tag} Adding new file to the queue: {new_file}")
         prepare_file_for_processing(new_file)
@@ -106,34 +131,25 @@ def on_demand_process_missing_add():
     on_demand_batch()
 
 
-def print_usage():
-    print("Usage: python on_demand.py [batch|missing]")
-    print("  batch: creates a new batch, and process all pending/working files.")
-    print("  missing: reads the IN folder and adds the missing files to the queue, and processes them.")
-
-
 def main():
-    if len(sys.argv) < 2:
-        print_usage()
-        return
+    if not _args.yes:
+        print("\nATTENTION: It is advisable to stop the container service before running this command!")
+        print("Press ENTER to continue or CTRL+C to abort.")
+        input()
 
-    print("\nATTENTION: It is advisable to stop the container service before running this command!")
-    print("Press ENTER to continue or CTRL+C to abort.")
-    input()
-
-    command = sys.argv[1].strip()
+    command = _args.command
 
     if command == "batch":
         on_demand_batch()
     elif command == "missing":
         on_demand_process_missing_add()
-    else:
-        print("Invalid command.\n")
-        print_usage()
 
 
 if __name__ == '__main__':
     print("Flushing buffered OTEL log records before starting.")
     flush_all_otel_loggers()
 
-    main()
+    try:
+        main()
+    finally:
+        shutdown_pool()

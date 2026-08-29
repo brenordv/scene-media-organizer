@@ -1,5 +1,5 @@
-.control
 !.env.example
+!.pixi/config.toml
 !.yarn/patches
 !.yarn/plugins
 !.yarn/releases
@@ -34,6 +34,7 @@
 .abstra/
 .cache
 .cache/
+.control
 .coverage
 .coverage.*
 .data/
@@ -73,6 +74,7 @@
 .idea/caches/build_file_checksums.ser
 .idea/httpRequests
 .idea/replstate.xml
+.idea/sonarlint.xml
 .idea/sonarlint.xml # see https://community.sonarsource.com/t/is-the-file-idea-idea-idea-sonarlint-xml-intended-to-be-under-source-control/121119
 .idea/sonarlint/
 .idea_modules/
@@ -90,6 +92,7 @@
 .pdm-build/
 .pdm-python
 .pixi
+.pixi/*
 .pnp.*
 .pybuilder/
 .pypirc
@@ -126,6 +129,7 @@ bower_components
 build/
 build/Release
 celerybeat-schedule
+celerybeat-schedule*
 celerybeat.pid
 cmake-build-*/
 com_crashlytics_export_strings.xml
@@ -177,6 +181,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 sdist/
 share/python-wheels/
 target/
+tempCodeRunnerFile.py
 var/
 venv.bak/
 venv/

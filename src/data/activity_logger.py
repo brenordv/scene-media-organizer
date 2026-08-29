@@ -1,4 +1,4 @@
-import psycopg2
+import psycopg
 from opentelemetry import trace
 
 from src.data.base_repository import BaseRepository
@@ -60,7 +60,7 @@ class ActivityTracker(BaseRepository):
                                          );"""
                     cursor.execute(create_table_query)
                     conn.commit()
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error creating the work queue table: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
@@ -88,7 +88,7 @@ class ActivityTracker(BaseRepository):
                         cursor.execute(insert_query, (activity,))
                         conn.commit()
 
-            except psycopg2.Error as e:
+            except psycopg.Error as e:
                 error_message = f"Error logging activity: {str(e)}"
                 self._logger.error(error_message)
                 raise RuntimeError(error_message) from e

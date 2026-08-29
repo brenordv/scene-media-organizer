@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import zipfile
 import tarfile
@@ -74,7 +75,7 @@ def decompress_file(file_path):
             _logger.debug("Trying to decompress a tar archive...")
             try:
                 with tarfile.open(path, 'r:*') as tar_ref:
-                    tar_ref.extractall(extract_dir)
+                    tar_ref.extractall(extract_dir, filter="data")
                 return True
             except tarfile.TarError as e:
                 _logger.error(f"Error decompressing tar archive: {str(e)}")
@@ -107,7 +108,7 @@ def _decompress_native(path, engine, archive_type, output_path):
     try:
         with engine.open(path, 'rb') as file:
             with open(output_path, 'wb') as output_file:
-                output_file.write(file.read())
+                shutil.copyfileobj(file, output_file)
         return True
     except OSError as e:
         _logger.error(f"Error decompressing {archive_type} archive: {str(e)}")

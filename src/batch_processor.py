@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 
+import requests
 from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
@@ -22,14 +23,14 @@ _activity_tracker = ActivityTracker("Batch Processor")
 _notification_agent = NotificationRepository(client_id="smo-watchdog-notification-sender")
 
 if _series_base_folder is None or _movies_base_folder is None:
-    _activity_tracker.error("No base folders defined. Exiting...")
-    exit(1)
+    raise RuntimeError("MOVIES_BASE_FOLDER and SERIES_BASE_FOLDER must be set")
 
 
 def batch_processor():
     tag = "[BATCH PROCESSOR]"
     current_batch_id = None
     idle_cycles = 0
+    _work_queue_manager.recover_stale_batches()
     while True:
         batch, current_batch_id = _work_queue_manager.get_next_batch(
             batch_id=current_batch_id
@@ -127,14 +128,30 @@ def _process_batch_item(item):
             "file.name": full_path_obj.name,
         })
 
+    if not full_path_obj.exists():
+        _activity_tracker.warning(f"{tag} File no longer exists: {full_path}")
+        item['status'] = 'FAILED_MISSING'
+        _work_queue_manager.update(item)
+        return None
+
     _activity_tracker.debug(f"{tag} Processing item {full_path}. Checking if file is stable...")
     is_file_stable = check_is_file_stable(full_path)
 
     if not is_file_stable:
         _activity_tracker.warning(f"{tag} File is not stable. Will try again later. File: {full_path}")
+        item['attempts'] = max(0, item['attempts'] - 1)
+        _work_queue_manager.update(item)
         return item
 
-    media_info = identify_file(full_path)
+    try:
+        media_info = identify_file(full_path)
+    except requests.exceptions.RequestException as e:
+        _activity_tracker.warning(
+            f"{tag} Identify service unreachable ({str(e)}). Will retry the item in a later batch."
+        )
+        item['attempts'] = max(0, item['attempts'] - 1)
+        _work_queue_manager.update(item)
+        return item
 
     if media_info is None:
         item['status'] = 'FAILED_ID'
@@ -156,6 +173,7 @@ def _process_batch_item(item):
         _activity_tracker.error(f"{tag} File has no media info id. No way to proceed with it. Media Info cache id: {media_info_id}")
         item['status'] = 'FAILED_ID'
         _work_queue_manager.update(item)
+        return None
 
     item['media_info_cache_id'] = media_info_id
     _work_queue_manager.update(item)

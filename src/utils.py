@@ -72,7 +72,7 @@ def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
         service_name=service_name,
         log_name=log_name,
         otel_exporter_endpoint=otel_endpoint,
-        instrument_db={"psycopg2": {"enable_commenter": True}},
+        instrument_db={"psycopg": {"enable_commenter": True}},
         instrument_requests=True,
         **kwargs,
     )
