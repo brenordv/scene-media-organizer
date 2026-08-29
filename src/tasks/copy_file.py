@@ -1,28 +1,30 @@
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
-import shutil
 
 from opentelemetry import trace
 
-from src.utils import to_bool_env, get_otel_log_handler
+from src.utils import get_otel_log_handler, to_bool_env
 
 _logger = get_otel_log_handler("Copy File", unique_handler_types=True)
 
 
 @_logger.trace("copy_file")
-def copy_file(src_file, dst_path_str):
+def copy_file(src_file: str, dst_path_str: str) -> bool:
     span = trace.get_current_span()
     src_path = Path(src_file)
     dst_path = Path(dst_path_str)
 
     if span.is_recording():
-        span.set_attributes({
-            "file.source_path": str(src_file),
-            "file.destination_path": str(dst_path_str),
-            "file.name": src_path.name,
-        })
+        span.set_attributes(
+            {
+                "file.source_path": str(src_file),
+                "file.destination_path": str(dst_path_str),
+                "file.name": src_path.name,
+            }
+        )
 
     max_retries = 5
     base_delay_seconds = 3
@@ -50,9 +52,7 @@ def copy_file(src_file, dst_path_str):
 
             return True
         except Exception as e:
-            _logger.warning(
-                f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}"
-            )
+            _logger.warning(f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}")
             delay_seconds = base_delay_seconds * (i + 1)
             _logger.debug(f"Retrying in {delay_seconds} seconds...")
 
@@ -62,7 +62,7 @@ def copy_file(src_file, dst_path_str):
 
 
 @_logger.trace("_copy_file")
-def _copy_file(src_file, dst_path_str, copy_using_rsync):
+def _copy_file(src_file: str, dst_path_str: str, copy_using_rsync: bool) -> None:
     span = trace.get_current_span()
     copy_method = "rsync" if copy_using_rsync else "shutil"
 
@@ -72,14 +72,19 @@ def _copy_file(src_file, dst_path_str, copy_using_rsync):
     if copy_using_rsync:
         cmd = [
             "rsync",
-            "-a", "--info=progress2", "--human-readable",
-            "--partial", "--append-verify", "--stats",
-            "--xattrs", "--acls",
-            src_file, dst_path_str,
+            "-a",
+            "--info=progress2",
+            "--human-readable",
+            "--partial",
+            "--append-verify",
+            "--stats",
+            "--xattrs",
+            "--acls",
+            src_file,
+            dst_path_str,
         ]
-        with subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-        ) as p:
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as p:
+            assert p.stdout is not None  # stdout=PIPE guarantees a stream
             for line in p.stdout:
                 _logger.debug(line.rstrip())
 
@@ -95,7 +100,7 @@ def _copy_file(src_file, dst_path_str, copy_using_rsync):
 
 
 @_logger.trace("_change_destination_ownership")
-def _change_destination_ownership(dst_file, src_file):
+def _change_destination_ownership(dst_file: Path, src_file: str) -> None:
     """Change the ownership of the destination file to match the source file.
 
     Required only when:

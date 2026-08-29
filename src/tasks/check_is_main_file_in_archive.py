@@ -43,26 +43,17 @@ def is_main_archive_file(file_path: str) -> bool:
         # TAR.GZ / TGZ
         {
             "main": [r"\.tar\.gz$", r"\.tgz$"],
-            "multi": [
-                r"\.tar\.gz\.\d{3,}$", r"\.tgz\.\d{3,}$",
-                r"\.part\d+\.tar\.gz$", r"\.part\d+\.tgz$"
-            ],
+            "multi": [r"\.tar\.gz\.\d{3,}$", r"\.tgz\.\d{3,}$", r"\.part\d+\.tar\.gz$", r"\.part\d+\.tgz$"],
         },
         # TAR.BZ2 / TBZ2
         {
             "main": [r"\.tar\.bz2$", r"\.tbz2$"],
-            "multi": [
-                r"\.tar\.bz2\.\d{3,}$", r"\.tbz2\.\d{3,}$",
-                r"\.part\d+\.tar\.bz2$", r"\.part\d+\.tbz2$"
-            ],
+            "multi": [r"\.tar\.bz2\.\d{3,}$", r"\.tbz2\.\d{3,}$", r"\.part\d+\.tar\.bz2$", r"\.part\d+\.tbz2$"],
         },
         # TAR.XZ / TXZ
         {
             "main": [r"\.tar\.xz$", r"\.txz$"],
-            "multi": [
-                r"\.tar\.xz\.\d{3,}$", r"\.txz\.\d{3,}$",
-                r"\.part\d+\.tar\.xz$", r"\.part\d+\.txz$"
-            ],
+            "multi": [r"\.tar\.xz\.\d{3,}$", r"\.txz\.\d{3,}$", r"\.part\d+\.tar\.xz$", r"\.part\d+\.txz$"],
         },
         # GZ
         {

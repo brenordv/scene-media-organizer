@@ -1,17 +1,17 @@
 import json
 import os
-from typing import Callable, Optional, Sequence, Tuple, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import paho.mqtt.client as mqtt
 from opentelemetry import trace
 from paho.mqtt.client import error_string as mqtt_error_string
-
 from raccoontools.shared.serializer import obj_dump_serializer
 
 from src.data.activity_logger import ActivityTracker
 from src.utils import to_int
 
-PayloadType = Union[str, bytes, dict]
+PayloadType = str | bytes | dict[str, Any]
 
 
 class NotificationRepository:
@@ -25,22 +25,24 @@ class NotificationRepository:
 
     def __init__(
         self,
-        broker_host: Optional[str] = None,
-        broker_port: Optional[int] = None,
-        base_topic: Optional[str] = None,
-        client_id: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        tls_ca_cert: Optional[str] = None,
-        keepalive_seconds: Optional[int] = None,
-        log_level: Optional[str] = None,
+        broker_host: str | None = None,
+        broker_port: int | None = None,
+        base_topic: str | None = None,
+        client_id: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        tls_ca_cert: str | None = None,
+        keepalive_seconds: int | None = None,
+        log_level: str | None = None,
     ) -> None:
         resolved_log_level = (log_level or os.getenv("MQTT_LOG_LEVEL") or "DEBUG").upper()
         self._logger = ActivityTracker("Notification Repository", resolved_log_level)
 
         host = broker_host or os.getenv("MQTT_HOST")
         if not host:
-            raise ValueError("MQTT broker host not configured. Provide 'broker_host' or set environment variable 'MQTT_HOST'.")
+            raise ValueError(
+                "MQTT broker host not configured. Provide 'broker_host' or set environment variable 'MQTT_HOST'."
+            )
 
         port = broker_port if broker_port is not None else to_int(os.getenv("MQTT_PORT"), 1883)
         topic = (base_topic or os.getenv("MQTT_BASE_TOPIC") or "notifications").strip()
@@ -48,7 +50,9 @@ class NotificationRepository:
         username_final = username or os.getenv("MQTT_USERNAME")
         password_final = password or os.getenv("MQTT_PASSWORD")
         tls_ca_cert_final = tls_ca_cert or os.getenv("MQTT_TLS_CA_CERT")
-        keepalive_final = keepalive_seconds if keepalive_seconds is not None else to_int(os.getenv("MQTT_KEEPALIVE_SECONDS"), 60)
+        keepalive_final = (
+            keepalive_seconds if keepalive_seconds is not None else to_int(os.getenv("MQTT_KEEPALIVE_SECONDS"), 60)
+        )
 
         self._broker_host = host
         self._broker_port = port
@@ -65,8 +69,8 @@ class NotificationRepository:
             self._client.tls_set(ca_certs=tls_ca_cert_final)
 
         self._is_connected: bool = False
-        self._subscriptions: Sequence[Tuple[str, int]] = []
-        self._message_handler: Optional[Callable[[str, bytes], None]] = None
+        self._subscriptions: Sequence[tuple[str, int]] = []
+        self._message_handler: Callable[[str, bytes], None] | None = None
 
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
@@ -75,7 +79,7 @@ class NotificationRepository:
     def post_message(
         self,
         message: PayloadType,
-        topic: Optional[str] = None,
+        topic: str | None = None,
         qos: int = 1,
         retain: bool = False,
     ) -> None:
@@ -84,23 +88,20 @@ class NotificationRepository:
 
         with tracer.start_as_current_span("NotificationRepository.post_message") as span:
             if span.is_recording():
-                span.set_attributes({
-                    "mqtt.topic": target_topic,
-                    "mqtt.qos": qos,
-                    "mqtt.retain": retain,
-                    "mqtt.broker_host": self._broker_host,
-                })
+                span.set_attributes(
+                    {
+                        "mqtt.topic": target_topic,
+                        "mqtt.qos": qos,
+                        "mqtt.retain": retain,
+                        "mqtt.broker_host": self._broker_host,
+                    }
+                )
 
             if not target_topic:
-                raise ValueError(
-                    "Topic must be provided either via constructor "
-                    "base_topic or the 'topic' argument"
-                )
+                raise ValueError("Topic must be provided either via constructor " "base_topic or the 'topic' argument")
 
             if isinstance(message, dict):
-                payload: Union[str, bytes] = json.dumps(
-                    message, default=obj_dump_serializer
-                )
+                payload: str | bytes = json.dumps(message, default=obj_dump_serializer)
             elif isinstance(message, (str, bytes)):
                 payload = message
             else:
@@ -110,22 +111,16 @@ class NotificationRepository:
                 self._connect_if_needed()
                 self._ensure_background_loop()
 
-            result = self._client.publish(
-                target_topic, payload=payload, qos=qos, retain=retain
-            )
+            result = self._client.publish(target_topic, payload=payload, qos=qos, retain=retain)
             if result.rc != mqtt.MQTT_ERR_SUCCESS:
-                self._logger.error(
-                    f"Failed to publish to '{target_topic}': rc={result.rc}"
-                )
+                self._logger.error(f"Failed to publish to '{target_topic}': rc={result.rc}")
             else:
-                self._logger.debug(
-                    f"Published to '{target_topic}' (qos={qos}, retain={retain})"
-                )
+                self._logger.debug(f"Published to '{target_topic}' (qos={qos}, retain={retain})")
 
     def start_reading(
         self,
-        topics: Optional[Union[str, Sequence[str]]] = None,
-        message_handler: Optional[Callable[[str, bytes], None]] = None,
+        topics: str | Sequence[str] | None = None,
+        message_handler: Callable[[str, bytes], None] | None = None,
         qos: int = 1,
         background: bool = True,
     ) -> None:
@@ -154,7 +149,7 @@ class NotificationRepository:
         self._connect_if_needed()
 
         # Subscribe immediately if already connected; on_connect will re-subscribe after reconnects
-        for (topic_name, topic_qos) in self._subscriptions:
+        for topic_name, topic_qos in self._subscriptions:
             res = self._client.subscribe(topic=(topic_name, topic_qos))
             if isinstance(res, tuple):
                 rc = res[0]
@@ -180,10 +175,12 @@ class NotificationRepository:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("NotificationRepository._connect") as span:
             if span.is_recording():
-                span.set_attributes({
-                    "mqtt.broker_host": self._broker_host,
-                    "mqtt.broker_port": self._broker_port,
-                })
+                span.set_attributes(
+                    {
+                        "mqtt.broker_host": self._broker_host,
+                        "mqtt.broker_port": self._broker_port,
+                    }
+                )
 
             try:
                 self._logger.debug(
@@ -212,12 +209,12 @@ class NotificationRepository:
             self._loop_running = False
 
     # Paho v3.1.1 callback signatures
-    def _on_connect(self, client: mqtt.Client, userdata, flags, rc: int) -> None:
-        self._is_connected = (rc == 0)
+    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: Any, rc: int) -> None:
+        self._is_connected = rc == 0
         if rc == 0:
             self._logger.info("Connected to MQTT broker")
             # Ensure subscriptions are applied on (re)connect
-            for (topic_name, topic_qos) in self._subscriptions:
+            for topic_name, topic_qos in self._subscriptions:
                 result = self._client.subscribe(topic=(topic_name, topic_qos))
                 if isinstance(result, tuple):
                     sub_rc = result[0]
@@ -228,23 +225,23 @@ class NotificationRepository:
         else:
             self._logger.error(f"Failed to connect to MQTT broker: rc={rc}")
 
-    def _on_disconnect(self, client: mqtt.Client, userdata, rc: int) -> None:
+    def _on_disconnect(self, client: mqtt.Client, userdata: Any, rc: int) -> None:
         self._is_connected = False
         if rc != 0:
             self._logger.warning(f"Unexpected MQTT disconnection: rc={rc} ({mqtt_error_string(rc)})")
         else:
             self._logger.info("Disconnected from MQTT broker")
 
-    def _on_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
+    def _on_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
         try:
-            payload_bytes: bytes = msg.payload if isinstance(msg.payload, (bytes, bytearray)) else bytes(str(msg.payload), "utf-8")
+            payload_bytes: bytes = (
+                msg.payload if isinstance(msg.payload, (bytes, bytearray)) else bytes(str(msg.payload), "utf-8")
+            )
             if self._message_handler:
                 self._message_handler(msg.topic, payload_bytes)
             else:
                 # Default behavior: log the message
                 preview = payload_bytes[:256]
-                self._logger.info(f"Message on '{msg.topic}': {preview}")
+                self._logger.info(f"Message on '{msg.topic}': {preview!r}")
         except Exception as exc:  # pragma: no cover - defensive logging
             self._logger.error(f"Error handling incoming MQTT message: {exc}")
-
-

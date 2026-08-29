@@ -1,20 +1,24 @@
 import uuid
+from typing import Any
 
-import psycopg2
+import psycopg
 from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
 from src.data.base_repository import BaseRepository
+from src.helpers import parse_work_item_row, partition_open_batches
 
 _activity_tracker = ActivityTracker("Work Queue Manager")
 
+_MAX_ATTEMPTS = 5
+
 
 class WorkQueueManager(BaseRepository):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("Work Queue Manager")
         self._logger = _activity_tracker
 
-    def _ensure_table_exists(self):
+    def _ensure_table_exists(self) -> None:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -49,63 +53,255 @@ class WorkQueueManager(BaseRepository):
                                          );"""
                     cursor.execute(create_table_query)
 
+                    self._logger.debug("Ensuring work_queue.attempts column exists")
+                    cursor.execute(
+                        "ALTER TABLE work_queue ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;"
+                    )
+
                     conn.commit()
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error creating the work queue table: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.recover_stale_batches")
+    def recover_stale_batches(self) -> None:
+        """Called once at processor startup. Any in-progress batch at that moment
+        is an orphan from a previous crash: release its items and close it."""
+        span = trace.get_current_span()
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE work_queue SET status = 'PENDING', modified_at = CURRENT_TIMESTAMP "
+                        "WHERE status = 'WORKING'"
+                    )
+                    recovered_items = cursor.rowcount
+
+                    cursor.execute(
+                        "UPDATE batch_control SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP "
+                        "WHERE in_progress = TRUE"
+                    )
+                    recovered_batches = cursor.rowcount
+
+                    conn.commit()
+
+            self._logger.info(
+                f"Startup recovery: released {recovered_items} stale WORKING item(s) and "
+                f"closed {recovered_batches} orphaned in-progress batch(es)."
+            )
+            if span.is_recording():
+                span.set_attributes(
+                    {
+                        "recovery.items": recovered_items,
+                        "recovery.batches": recovered_batches,
+                    }
+                )
+
+        except psycopg.Error as e:
+            error_message = f"Error recovering stale batches: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.find_resumable_batch")
+    def find_resumable_batch(self) -> dict[str, Any] | None:
+        """Find the in-progress batch to resume, closing any other open batches.
+
+        Returns:
+            None when no batch is in progress; otherwise a dict with keys
+            batch_id (str), created_at, last_modified, and item_count (int) for
+            the most recently created open batch. Every other open batch is
+            closed (in_progress = FALSE) before returning, since only one batch
+            can meaningfully resume.
+        """
+        span = trace.get_current_span()
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    select_query = """SELECT batch_id, MAX(created_at), MAX(modified_at), COUNT(*)
+                                      FROM batch_control
+                                      WHERE in_progress = TRUE
+                                      GROUP BY batch_id"""
+                    cursor.execute(select_query)
+                    rows = cursor.fetchall()
+
+                    resume_row, stale_batch_ids = partition_open_batches(rows)
+
+                    if resume_row is None:
+                        return None
+
+                    for stale_batch_id in stale_batch_ids:
+                        close_query = """UPDATE batch_control
+                                         SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP
+                                         WHERE batch_id = %s"""
+                        cursor.execute(close_query, (stale_batch_id,))
+
+                    conn.commit()
+
+            if stale_batch_ids:
+                self._logger.warning(
+                    f"Closed {len(stale_batch_ids)} stale open batch(es) without resuming: "
+                    f"{[str(stale_batch_id) for stale_batch_id in stale_batch_ids]}"
+                )
+
+            batch_id = str(resume_row[0])
+            item_count = resume_row[3]
+            self._logger.debug(
+                f"Found resumable batch [{batch_id}] with {item_count} item(s), " f"last activity {resume_row[2]}."
+            )
+            if span.is_recording():
+                span.set_attributes(
+                    {
+                        "resume.batch_id": batch_id,
+                        "resume.item_count": item_count,
+                        "resume.stale_batches": len(stale_batch_ids),
+                    }
+                )
+
+            return {
+                "batch_id": batch_id,
+                "created_at": resume_row[1],
+                "last_modified": resume_row[2],
+                "item_count": item_count,
+            }
+
+        except psycopg.Error as e:
+            error_message = f"Error finding resumable batch: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.release_interrupted_items")
+    def release_interrupted_items(self) -> None:
+        """Release globally-held WORKING items after a crash or interrupt.
+
+        Items already past the attempt cap are marked FAILED_MAX_ATTEMPTS; the
+        rest return to PENDING with their pickup attempt refunded, so a run that
+        merely picked items up and was interrupted does not consume the cap.
+        Runs with no batch filter, mirroring the global sweep the on_demand path
+        already performs.
+        """
+        span = trace.get_current_span()
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    fail_query = """UPDATE work_queue
+                                    SET status = 'FAILED_MAX_ATTEMPTS', modified_at = CURRENT_TIMESTAMP
+                                    WHERE status = 'WORKING' AND attempts > %s
+                                    RETURNING filename"""
+                    cursor.execute(fail_query, (_MAX_ATTEMPTS,))
+                    capped_rows = cursor.fetchall()
+
+                    release_query = """UPDATE work_queue
+                                       SET status = 'PENDING',
+                                           attempts = GREATEST(attempts - 1, 0),
+                                           modified_at = CURRENT_TIMESTAMP
+                                       WHERE status = 'WORKING'"""
+                    cursor.execute(release_query)
+                    released_count = cursor.rowcount
+
+                    conn.commit()
+
+            if capped_rows:
+                capped_filenames = [row[0] for row in capped_rows]
+                self._logger.warning(
+                    f"{len(capped_filenames)} interrupted item(s) reached the attempt "
+                    f"cap ({_MAX_ATTEMPTS}) and were marked FAILED_MAX_ATTEMPTS: "
+                    f"{capped_filenames[:20]}"
+                )
+                if span.is_recording():
+                    span.set_attribute("batch.capped_items", len(capped_filenames))
+
+            self._logger.debug(f"Released {released_count} interrupted item(s) back to PENDING.")
+            if span.is_recording():
+                span.set_attribute("resume.released_items", released_count)
+
+        except psycopg.Error as e:
+            error_message = f"Error releasing interrupted items: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
     @_activity_tracker.trace("WorkQueueManager.add_to_queue")
-    def add_to_queue(self, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id):
+    def add_to_queue(
+        self,
+        full_path: str,
+        filename: str,
+        parent: str,
+        target_path: str | None,
+        status: str,
+        is_archive: bool,
+        is_main_archive_file: bool,
+        media_info_cache_id: str | None,
+    ) -> Any:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes({
-                "db.table": "work_queue",
-                "db.operation": "insert",
-                "file.path": str(full_path),
-                "file.name": str(filename),
-                "queue.status": str(status),
-            })
+            span.set_attributes(
+                {
+                    "db.table": "work_queue",
+                    "db.operation": "insert",
+                    "file.path": str(full_path),
+                    "file.name": str(filename),
+                    "queue.status": str(status),
+                }
+            )
 
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    insert_query = """INSERT INTO work_queue (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id)
+                    insert_query = """INSERT INTO work_queue
+                                          (full_path, filename, parent, target_path, status,
+                                           is_archive, is_main_archive_file, media_info_cache_id)
                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                       returning id"""
-                    cursor.execute(insert_query, (full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id))
+                    cursor.execute(
+                        insert_query,
+                        (
+                            full_path,
+                            filename,
+                            parent,
+                            target_path,
+                            status,
+                            is_archive,
+                            is_main_archive_file,
+                            media_info_cache_id,
+                        ),
+                    )
                     conn.commit()
                     row = cursor.fetchone()
                     if row is not None:
                         return row[0]
 
                     raise RuntimeError(f"Error adding {full_path} to the work queue: No row returned from the database")
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error adding {full_path} to the work queue: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.update")
-    def update(self, work_item):
+    def update(self, work_item: dict[str, Any]) -> None:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes({
-                "db.table": "work_queue",
-                "db.operation": "update",
-                "work_item.id": str(work_item.get('id', '')),
-                "work_item.status": str(work_item.get('status', '')),
-            })
+            span.set_attributes(
+                {
+                    "db.table": "work_queue",
+                    "db.operation": "update",
+                    "work_item.id": str(work_item.get("id", "")),
+                    "work_item.status": str(work_item.get("status", "")),
+                }
+            )
 
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    work_item_id = work_item['id']
-                    full_path = work_item.get('full_path')
-                    target_path = work_item.get('target_path')
-                    status = work_item.get('status')
-                    self._logger.debug(f"Updating work item [{work_item_id}]. Full path: {full_path}, target path: {target_path}, status: {status}")
+                    work_item_id = work_item["id"]
+                    full_path = work_item.get("full_path")
+                    target_path = work_item.get("target_path")
+                    status = work_item.get("status")
+                    self._logger.debug(
+                        f"Updating work item [{work_item_id}]. Full path: {full_path}, "
+                        f"target path: {target_path}, status: {status}"
+                    )
 
-                    keys = [key for key in work_item.keys() if key not in ['id', 'created_at', 'modified_at']]
+                    keys = [key for key in work_item.keys() if key not in ["id", "created_at", "modified_at"]]
                     values = []
                     fields = []
 
@@ -118,97 +314,137 @@ class WorkQueueManager(BaseRepository):
                     update_query = f"UPDATE work_queue SET {fields_str} WHERE id = %s"
                     cursor.execute(update_query, values + [work_item_id])
                     conn.commit()
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error updating work item {work_item['id']}: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.get_next_batch")
-    def get_next_batch(self, batch_id=None, force_new_batch=False):
+    def get_next_batch(
+        self,
+        batch_id: str | None = None,
+        force_new_batch: bool = False,
+        reuse_batch_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes({
-                "db.table": "work_queue",
-                "db.operation": "select_and_update",
-                "batch.id": str(batch_id or ""),
-                "batch.force_new": force_new_batch,
-            })
+            span.set_attributes(
+                {
+                    "db.table": "work_queue",
+                    "db.operation": "select_and_update",
+                    "batch.id": str(batch_id or ""),
+                    "batch.force_new": force_new_batch,
+                }
+            )
 
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
-                    cursor.execute(select_query)
-                    row = cursor.fetchone()
+                    if reuse_batch_id is None:
+                        select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
+                        cursor.execute(select_query)
+                        row = cursor.fetchone()
 
-                    if row is not None and not force_new_batch:
-                        self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
-                        return [], batch_id
+                        if row is not None and not force_new_batch:
+                            self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
+                            return [], batch_id
 
                     update_and_select_query = """
                                               UPDATE work_queue
                                               SET status = 'WORKING',
+                                                  attempts = attempts + 1,
                                                   modified_at = CURRENT_TIMESTAMP
                                               WHERE status = 'PENDING'
-                                              RETURNING id, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, created_at, modified_at, media_info_cache_id"""
+                                              RETURNING id, full_path, filename, parent, target_path,
+                                                        status, is_archive, is_main_archive_file,
+                                                        created_at, modified_at,
+                                                        media_info_cache_id, attempts"""
 
                     cursor.execute(update_and_select_query)
                     rows = cursor.fetchall()
 
                     if len(rows) == 0:
                         conn.commit()
+                        if reuse_batch_id is not None:
+                            return [], reuse_batch_id
                         return [], None
 
                     self._logger.debug(f"Found {len(rows)} work items to process. Creating a new batch...")
                     batch = [self._parse_work_item_row_to_object(row) for row in rows]
 
-                    # At this point we can generate a new batch ID, because there's nothing in progress.
-                    batch_id = str(uuid.uuid4())
+                    if reuse_batch_id is not None:
+                        batch_id = reuse_batch_id
+                        cursor.execute(
+                            "SELECT work_queue_id FROM batch_control WHERE batch_id = %s",
+                            (batch_id,),
+                        )
+                        existing_member_ids = {str(member_row[0]) for member_row in cursor.fetchall()}
+                        if span.is_recording():
+                            span.set_attributes(
+                                {
+                                    "batch.resumed": True,
+                                    "batch.id": batch_id,
+                                }
+                            )
+                    else:
+                        # At this point we can generate a new batch ID, because there's nothing in progress.
+                        batch_id = str(uuid.uuid4())
+                        existing_member_ids = set()
 
                     for batch_item in batch:
-                        insert_query = """INSERT INTO batch_control (batch_id, work_queue_id, in_progress) VALUES (%s, %s, true)"""
-                        cursor.execute(insert_query, (batch_id, batch_item['id']))
+                        if str(batch_item["id"]) in existing_member_ids:
+                            continue
+                        insert_query = (
+                            """INSERT INTO batch_control (batch_id, work_queue_id, in_progress) VALUES (%s, %s, true)"""
+                        )
+                        cursor.execute(insert_query, (batch_id, batch_item["id"]))
 
                     conn.commit()
                 return batch, batch_id
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error getting next batch of work items: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.set_batch_as_done")
-    def set_batch_as_done(self, batch_id):
+    def set_batch_as_done(self, batch_id: Any) -> None:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes({
-                "db.table": "batch_control",
-                "db.operation": "update",
-                "batch.id": str(batch_id),
-            })
+            span.set_attributes(
+                {
+                    "db.table": "batch_control",
+                    "db.operation": "update",
+                    "batch.id": str(batch_id),
+                }
+            )
 
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     self._logger.debug(f"Setting batch [{batch_id}] as done...")
-                    update_query = """UPDATE batch_control SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP WHERE batch_id = %s"""
+                    update_query = """UPDATE batch_control
+                                      SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP
+                                      WHERE batch_id = %s"""
                     cursor.execute(update_query, (batch_id,))
                     conn.commit()
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"Error setting batch [{batch_id}] as done: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.move_working_items_back_to_pending")
-    def move_working_items_back_to_pending(self, batch_id):
+    def move_working_items_back_to_pending(self, batch_id: Any) -> None:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes({
-                "db.table": "work_queue",
-                "db.operation": "update",
-                "batch.id": str(batch_id or ""),
-            })
+            span.set_attributes(
+                {
+                    "db.table": "work_queue",
+                    "db.operation": "update",
+                    "batch.id": str(batch_id or ""),
+                }
+            )
 
         try:
             if batch_id is None:
@@ -216,29 +452,58 @@ class WorkQueueManager(BaseRepository):
 
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    self._logger.debug(f"[Batch ID: {batch_id}] Moving working items back to pending so the next back end can process them...")
-                    # TODO: Add attempt control, otherwise we might end up retrying impossibly wrong items forever.
+                    self._logger.debug(
+                        f"[Batch ID: {batch_id}] Sweeping working items: "
+                        "capping exhausted ones, releasing the rest to pending..."
+                    )
 
-                    update_query = """UPDATE work_queue
-                                      SET status      = 'PENDING',
-                                          modified_at = CURRENT_TIMESTAMP
-                                      WHERE status = 'WORKING'"""
+                    batch_filter = " AND id IN ( SELECT work_queue_id FROM batch_control WHERE batch_id = %s )"
 
+                    fail_query = """UPDATE work_queue
+                                    SET status = 'FAILED_MAX_ATTEMPTS',
+                                        modified_at = CURRENT_TIMESTAMP
+                                    WHERE status = 'WORKING' AND attempts >= %s"""
+                    release_query = """UPDATE work_queue
+                                       SET status = 'PENDING',
+                                           modified_at = CURRENT_TIMESTAMP
+                                       WHERE status = 'WORKING'"""
+
+                    fail_params: tuple[Any, ...]
+                    release_params: tuple[Any, ...]
                     if batch_id is not None:
-                        update_query += """ AND id IN ( SELECT work_queue_id FROM batch_control WHERE batch_id = %s )"""
-                        cursor.execute(update_query, (batch_id,))
+                        fail_query += batch_filter
+                        release_query += batch_filter
+                        fail_params = (_MAX_ATTEMPTS, batch_id)
+                        release_params = (batch_id,)
                     else:
-                        cursor.execute(update_query)
+                        fail_params = (_MAX_ATTEMPTS,)
+                        release_params = ()
+
+                    fail_query += " RETURNING filename"
+
+                    cursor.execute(fail_query, fail_params)
+                    capped_rows = cursor.fetchall()
+
+                    cursor.execute(release_query, release_params)
 
                     conn.commit()
 
-        except psycopg2.Error as e:
+            if capped_rows:
+                capped_filenames = [row[0] for row in capped_rows]
+                self._logger.warning(
+                    f"[Batch ID: {batch_id}] {len(capped_filenames)} item(s) reached the attempt "
+                    f"cap ({_MAX_ATTEMPTS}) and were marked FAILED_MAX_ATTEMPTS: {capped_filenames}"
+                )
+                if span.is_recording():
+                    span.set_attribute("batch.capped_items", len(capped_filenames))
+
+        except psycopg.Error as e:
             error_message = f"[Batch ID: {batch_id}] Error moving working items back to pending: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.get_batch_data")
-    def get_batch_data(self, batch_id):
+    def get_batch_data(self, batch_id: Any) -> list[dict[str, Any]]:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -253,13 +518,13 @@ class WorkQueueManager(BaseRepository):
                     batch = [self._parse_work_item_row_to_object(row) for row in rows]
                     return batch
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"[Batch ID: {batch_id}] Error getting batch data: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.update_batch_verification")
-    def update_batch_verification(self, batch_id, verified):
+    def update_batch_verification(self, batch_id: Any, verified: bool) -> None:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -271,13 +536,13 @@ class WorkQueueManager(BaseRepository):
                     cursor.execute(update_query, (verified, batch_id))
                     conn.commit()
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             error_message = f"[Batch ID: {batch_id}] Error updating batch verification: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.filter_only_existing_filenames")
-    def filter_only_existing_filenames(self, filenames):
+    def filter_only_existing_filenames(self, filenames: list[str]) -> list[str]:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -285,24 +550,12 @@ class WorkQueueManager(BaseRepository):
                     select_query = """SELECT distinct filename FROM work_queue WHERE filename = ANY(%s)"""
                     cursor.execute(select_query, (filenames,))
                     rows = cursor.fetchall()
-                    return rows
-        except psycopg2.Error as e:
+                    return [row[0] for row in rows]
+        except psycopg.Error as e:
             error_message = f"Error checking database for filenames: {str(e)}"
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
     @staticmethod
-    def _parse_work_item_row_to_object(row):
-        return {
-            "id": row[0],
-            "full_path": row[1],
-            "filename": row[2],
-            "parent": row[3],
-            "target_path": row[4],
-            "status": row[5],
-            "is_archive": row[6],
-            "is_main_archive_file": row[7],
-            "created_at": row[8],
-            "modified_at": row[9],
-            "media_info_cache_id": row[10]
-        }
+    def _parse_work_item_row_to_object(row: Any) -> dict[str, Any]:
+        return parse_work_item_row(row)
