@@ -5,7 +5,7 @@ from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
 from src.data.base_repository import BaseRepository
-from src.helpers import parse_work_item_row
+from src.helpers import parse_work_item_row, partition_open_batches
 
 _activity_tracker = ActivityTracker("Work Queue Manager")
 
@@ -98,6 +98,120 @@ class WorkQueueManager(BaseRepository):
             self._logger.error(error_message)
             raise RuntimeError(error_message) from e
 
+    @_activity_tracker.trace("WorkQueueManager.find_resumable_batch")
+    def find_resumable_batch(self) -> dict | None:
+        """Find the in-progress batch to resume, closing any other open batches.
+
+        Returns:
+            None when no batch is in progress; otherwise a dict with keys
+            batch_id (str), created_at, last_modified, and item_count (int) for
+            the most recently created open batch. Every other open batch is
+            closed (in_progress = FALSE) before returning, since only one batch
+            can meaningfully resume.
+        """
+        span = trace.get_current_span()
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    select_query = """SELECT batch_id, MAX(created_at), MAX(modified_at), COUNT(*)
+                                      FROM batch_control
+                                      WHERE in_progress = TRUE
+                                      GROUP BY batch_id"""
+                    cursor.execute(select_query)
+                    rows = cursor.fetchall()
+
+                    resume_row, stale_batch_ids = partition_open_batches(rows)
+
+                    if resume_row is None:
+                        return None
+
+                    for stale_batch_id in stale_batch_ids:
+                        close_query = """UPDATE batch_control
+                                         SET in_progress = FALSE, modified_at = CURRENT_TIMESTAMP
+                                         WHERE batch_id = %s"""
+                        cursor.execute(close_query, (stale_batch_id,))
+
+                    conn.commit()
+
+            if stale_batch_ids:
+                self._logger.warning(
+                    f"Closed {len(stale_batch_ids)} stale open batch(es) without resuming: "
+                    f"{[str(stale_batch_id) for stale_batch_id in stale_batch_ids]}"
+                )
+
+            batch_id = str(resume_row[0])
+            item_count = resume_row[3]
+            self._logger.debug(
+                f"Found resumable batch [{batch_id}] with {item_count} item(s), "
+                f"last activity {resume_row[2]}."
+            )
+            if span.is_recording():
+                span.set_attributes({
+                    "resume.batch_id": batch_id,
+                    "resume.item_count": item_count,
+                    "resume.stale_batches": len(stale_batch_ids),
+                })
+
+            return {
+                "batch_id": batch_id,
+                "created_at": resume_row[1],
+                "last_modified": resume_row[2],
+                "item_count": item_count,
+            }
+
+        except psycopg.Error as e:
+            error_message = f"Error finding resumable batch: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.release_interrupted_items")
+    def release_interrupted_items(self) -> None:
+        """Release globally-held WORKING items after a crash or interrupt.
+
+        Items already past the attempt cap are marked FAILED_MAX_ATTEMPTS; the
+        rest return to PENDING with their pickup attempt refunded, so a run that
+        merely picked items up and was interrupted does not consume the cap.
+        Runs with no batch filter, mirroring the global sweep the on_demand path
+        already performs.
+        """
+        span = trace.get_current_span()
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    fail_query = """UPDATE work_queue
+                                    SET status = 'FAILED_MAX_ATTEMPTS', modified_at = CURRENT_TIMESTAMP
+                                    WHERE status = 'WORKING' AND attempts > %s
+                                    RETURNING filename"""
+                    cursor.execute(fail_query, (_MAX_ATTEMPTS,))
+                    capped_rows = cursor.fetchall()
+
+                    release_query = """UPDATE work_queue
+                                       SET status = 'PENDING', attempts = GREATEST(attempts - 1, 0), modified_at = CURRENT_TIMESTAMP
+                                       WHERE status = 'WORKING'"""
+                    cursor.execute(release_query)
+                    released_count = cursor.rowcount
+
+                    conn.commit()
+
+            if capped_rows:
+                capped_filenames = [row[0] for row in capped_rows]
+                self._logger.warning(
+                    f"{len(capped_filenames)} interrupted item(s) reached the attempt "
+                    f"cap ({_MAX_ATTEMPTS}) and were marked FAILED_MAX_ATTEMPTS: "
+                    f"{capped_filenames[:20]}"
+                )
+                if span.is_recording():
+                    span.set_attribute("batch.capped_items", len(capped_filenames))
+
+            self._logger.debug(f"Released {released_count} interrupted item(s) back to PENDING.")
+            if span.is_recording():
+                span.set_attribute("resume.released_items", released_count)
+
+        except psycopg.Error as e:
+            error_message = f"Error releasing interrupted items: {str(e)}"
+            self._logger.error(error_message)
+            raise RuntimeError(error_message) from e
+
     @_activity_tracker.trace("WorkQueueManager.add_to_queue")
     def add_to_queue(self, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, media_info_cache_id):
         span = trace.get_current_span()
@@ -167,7 +281,12 @@ class WorkQueueManager(BaseRepository):
             raise RuntimeError(error_message) from e
 
     @_activity_tracker.trace("WorkQueueManager.get_next_batch")
-    def get_next_batch(self, batch_id=None, force_new_batch=False):
+    def get_next_batch(
+        self,
+        batch_id: str | None = None,
+        force_new_batch: bool = False,
+        reuse_batch_id: str | None = None,
+    ) -> tuple[list[dict], str | None]:
         span = trace.get_current_span()
         if span.is_recording():
             span.set_attributes({
@@ -180,13 +299,14 @@ class WorkQueueManager(BaseRepository):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
-                    cursor.execute(select_query)
-                    row = cursor.fetchone()
+                    if reuse_batch_id is None:
+                        select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
+                        cursor.execute(select_query)
+                        row = cursor.fetchone()
 
-                    if row is not None and not force_new_batch:
-                        self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
-                        return [], batch_id
+                        if row is not None and not force_new_batch:
+                            self._logger.debug(f"Batch [{batch_id}] is already in progress. Returning empty batch...")
+                            return [], batch_id
 
                     update_and_select_query = """
                                               UPDATE work_queue
@@ -201,15 +321,33 @@ class WorkQueueManager(BaseRepository):
 
                     if len(rows) == 0:
                         conn.commit()
+                        if reuse_batch_id is not None:
+                            return [], reuse_batch_id
                         return [], None
 
                     self._logger.debug(f"Found {len(rows)} work items to process. Creating a new batch...")
                     batch = [self._parse_work_item_row_to_object(row) for row in rows]
 
-                    # At this point we can generate a new batch ID, because there's nothing in progress.
-                    batch_id = str(uuid.uuid4())
+                    if reuse_batch_id is not None:
+                        batch_id = reuse_batch_id
+                        cursor.execute(
+                            "SELECT work_queue_id FROM batch_control WHERE batch_id = %s",
+                            (batch_id,),
+                        )
+                        existing_member_ids = {str(member_row[0]) for member_row in cursor.fetchall()}
+                        if span.is_recording():
+                            span.set_attributes({
+                                "batch.resumed": True,
+                                "batch.id": batch_id,
+                            })
+                    else:
+                        # At this point we can generate a new batch ID, because there's nothing in progress.
+                        batch_id = str(uuid.uuid4())
+                        existing_member_ids = set()
 
                     for batch_item in batch:
+                        if str(batch_item['id']) in existing_member_ids:
+                            continue
                         insert_query = """INSERT INTO batch_control (batch_id, work_queue_id, in_progress) VALUES (%s, %s, true)"""
                         cursor.execute(insert_query, (batch_id, batch_item['id']))
 

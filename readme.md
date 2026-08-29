@@ -116,6 +116,16 @@ All three appear in the batch's Telegram report. To re-queue an item, set `statu
 
 One exception to the report: `on_demand.py` sweeps orphaned `WORKING` items (left by an earlier crash) back to pending before it builds a batch, and any it caps there are logged to the console only, not to Telegram. The in-batch cap during normal processing does reach the Telegram report.
 
+### Resumable maintenance runs
+
+Interrupting `on_demand.py` (Ctrl+C, a crash, or a kill) leaves the batch open. Re-running the same command resumes that batch: it redoes the file that was mid-processing, skips items already completed, and sends one final report covering the whole batch, including the items finished before the interruption. Pressing Ctrl+C at the confirmation prompt, before any work starts, aborts without touching the database.
+
+A few consequences worth knowing:
+
+- Interrupted pickups do not consume the attempt cap: an item that was only picked up and then interrupted has its attempt refunded on resume. For scheduled use this is a trade-off. A non-interactive run (`--yes`, for example from cron) that keeps crashing on the same poison item keeps refunding it and never reaches `FAILED_MAX_ATTEMPTS`. The watchdog service still enforces the strict cap; the `on_demand` path deliberately does not.
+- Resuming a batch left behind by a crashed *service* container works, but that batch's already-completed items were recorded with in-container paths (`/watch`, `/movies`, `/series`). If those paths do not resolve on the machine running `on_demand.py`, the final report flags them as verification failures even though the copies are fine.
+- The "stop the container service first" advice above still applies: resuming a batch the running service currently owns can double-process items.
+
 ## Usage
 
 1. Provide configuration as CLI flags, environment variables, or a `.env` file (see Configuration).
