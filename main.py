@@ -4,13 +4,13 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Callable
 
 from src.config import add_config_arguments, apply_config, require_env
 
 
-def _parse_args(argv):
-    parser = argparse.ArgumentParser(
-        description="Run the scene-media-organizer watchdog service.")
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the scene-media-organizer watchdog service.")
     add_config_arguments(parser)
     return parser.parse_args(argv)
 
@@ -18,24 +18,30 @@ def _parse_args(argv):
 _args = _parse_args(sys.argv[1:])
 apply_config(_args)
 require_env(
-    "WATCH_FOLDER", "MOVIES_BASE_FOLDER", "SERIES_BASE_FOLDER",
-    "POSTGRES_HOST", "API_URL", "MQTT_HOST", "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "WATCH_FOLDER",
+    "MOVIES_BASE_FOLDER",
+    "SERIES_BASE_FOLDER",
+    "POSTGRES_HOST",
+    "API_URL",
+    "MQTT_HOST",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
 )
 
 from src.data.db import init_pool, shutdown_pool  # noqa: E402
 
 init_pool()
 
+from watchdog.events import FileSystemEvent, FileSystemEventHandler  # noqa: E402
+
 # Imports below this line intentionally run after configuration is applied,
 # because these modules read the environment at import time.
 from watchdog.observers import Observer  # noqa: E402
-from watchdog.events import FileSystemEventHandler  # noqa: E402
 
-from src.data.activity_logger import ActivityTracker  # noqa: E402
 from src.batch_processor import batch_processor  # noqa: E402
-from src.queue_worker import add_to_queue, queue_consumer  # noqa: E402
+from src.data.activity_logger import ActivityTracker  # noqa: E402
 from src.data.work_queue_manager import WorkQueueManager  # noqa: E402
 from src.notification_receiver import handle_notification_messages  # noqa: E402
+from src.queue_worker import add_to_queue, queue_consumer  # noqa: E402
 from src.utils import flush_all_otel_loggers, get_otel_log_handler  # noqa: E402
 
 _work_queue_manager = WorkQueueManager()
@@ -55,7 +61,7 @@ def _safe_log(message: str) -> None:
         print(message)
 
 
-def _supervised(name: str, target) -> None:
+def _supervised(name: str, target: Callable[[], None]) -> None:
     """Run target forever; log and restart it with capped exponential backoff."""
     delay_seconds = 5
     while True:
@@ -76,12 +82,12 @@ def _supervised(name: str, target) -> None:
 
 
 class MyHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        add_to_queue(event.src_path, event.is_directory)
+    def on_created(self, event: FileSystemEvent) -> None:
+        add_to_queue(str(event.src_path), event.is_directory)
 
 
-def main():
-    monitored_path = os.environ.get('WATCH_FOLDER')
+def main() -> None:
+    monitored_path = os.environ["WATCH_FOLDER"]
     event_handler = MyHandler()
     observer = Observer()
     observer.schedule(event_handler, monitored_path, recursive=True)
@@ -89,7 +95,9 @@ def main():
     _activity_logger.info(f"Watching folder: {monitored_path}")
     observer.start()
 
-    threading.Thread(target=_supervised, args=("notification-receiver", handle_notification_messages), daemon=True).start()
+    threading.Thread(
+        target=_supervised, args=("notification-receiver", handle_notification_messages), daemon=True
+    ).start()
     threading.Thread(target=_supervised, args=("queue-consumer", queue_consumer), daemon=True).start()
     threading.Thread(target=_supervised, args=("batch-processor", batch_processor), daemon=True).start()
 
@@ -105,7 +113,7 @@ def main():
     observer.join()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Flush ALL OTEL log handlers before starting the main loop.
     # On Windows the BatchLogRecordProcessor's background HTTP export
     # can deadlock with event loop initialisation if both run

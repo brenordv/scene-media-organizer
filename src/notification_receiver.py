@@ -1,7 +1,7 @@
-import json
 import html
+import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from opentelemetry import trace
 from raccoontools.shared.serializer import obj_dump_deserializer
@@ -14,7 +14,7 @@ _activity_logger = ActivityTracker("Notification Receiver")
 _notification_agent = NotificationRepository(client_id="smo-watchdog-notification-receiver")
 
 
-def _get_insights_from_payload(payload):
+def _get_insights_from_payload(payload: Any) -> dict[str, Any]:
     # Considering the payload, what useful insights  can we extract in a heuristic way?
     if not isinstance(payload, dict):
         return {
@@ -26,16 +26,15 @@ def _get_insights_from_payload(payload):
             "with_target_path": 0,
         }
 
-    items: List[Dict[str, Any]] = payload.get("items") or []
+    items: list[dict[str, Any]] = payload.get("items") or []
     batch_id = payload.get("batch_id")
 
-    status_counts: Dict[str, int] = {}
-    failed_items: List[Dict[str, Any]] = []
+    status_counts: dict[str, int] = {}
+    failed_items: list[dict[str, Any]] = []
     archives_count = 0
     main_archive_files_count = 0
     with_target_path = 0
     unique_filenames = set()
-
 
     for item in items:
         if not isinstance(item, dict):
@@ -69,7 +68,7 @@ def _get_insights_from_payload(payload):
         if item.get("target_path"):
             with_target_path += 1
 
-    insights: Dict[str, Any] = {
+    insights: dict[str, Any] = {
         "batch_id": batch_id,
         "total_items": len(items),
         "status_counts": status_counts,
@@ -79,12 +78,13 @@ def _get_insights_from_payload(payload):
             "main_archive_files": main_archive_files_count,
         },
         "with_target_path": with_target_path,
-        "unique_filenames": list(unique_filenames)
+        "unique_filenames": list(unique_filenames),
     }
 
     return insights
 
-def _get_summary_from_payload(payload):
+
+def _get_summary_from_payload(payload: Any) -> dict[str, Any]:
     # From all the items in this batch, what is the summary?
     if not isinstance(payload, dict):
         return {
@@ -97,7 +97,7 @@ def _get_summary_from_payload(payload):
             "failed_retry": 0,
         }
 
-    items: List[Dict[str, Any]] = payload.get("items") or []
+    items: list[dict[str, Any]] = payload.get("items") or []
 
     def count_status(prefix: str) -> int:
         return sum(1 for it in items if isinstance(it, dict) and str(it.get("status", "")).startswith(prefix))
@@ -105,7 +105,7 @@ def _get_summary_from_payload(payload):
     def count_exact(value: str) -> int:
         return sum(1 for it in items if isinstance(it, dict) and it.get("status") == value)
 
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "batch_id": payload.get("batch_id"),
         "total": len(items),
         "done": count_exact("DONE"),
@@ -117,7 +117,10 @@ def _get_summary_from_payload(payload):
 
     return summary
 
-def _compose_notification_message(insights, summary, batch_verified, verification_details):
+
+def _compose_notification_message(
+    insights: dict[str, Any], summary: dict[str, Any], batch_verified: Any, verification_details: Any
+) -> str:
     # Compose a nice message to send to Telegram.
     batch_id = insights.get("batch_id") or summary.get("batch_id") or "?"
 
@@ -128,12 +131,12 @@ def _compose_notification_message(insights, summary, batch_verified, verificatio
     working = summary.get("working", 0)
     failed_retry = summary.get("failed_retry", 0)
 
-    status_counts: Dict[str, int] = insights.get("status_counts", {})
-    archive_counts: Dict[str, int] = insights.get("archive_counts", {})
+    status_counts: dict[str, int] = insights.get("status_counts", {})
+    archive_counts: dict[str, int] = insights.get("archive_counts", {})
     with_target_path = insights.get("with_target_path", 0)
     unique_filenames = insights.get("unique_filenames", [])
 
-    def fmt_kv_lines(mapping: Dict[str, int]) -> str:
+    def fmt_kv_lines(mapping: dict[str, int]) -> str:
         if not mapping:
             return ""
         ordered = sorted(mapping.items(), key=lambda kv: kv[0])
@@ -141,17 +144,14 @@ def _compose_notification_message(insights, summary, batch_verified, verificatio
 
     is_verified = "✅ VERIFIED" if batch_verified else "❌ FAILED VERIFICATION"
 
-    header = (
-        f"<b>🎬 Batch completed {is_verified}</b>"\
-        f"\n<b>Batch ID</b>: <code>{html.escape(str(batch_id))}</code>"
-    )
+    header = f"<b>🎬 Batch completed {is_verified}</b>" f"\n<b>Batch ID</b>: <code>{html.escape(str(batch_id))}</code>"
 
     high_level = (
-        f"\n\n<b>Summary</b>"\
-        f"\n• <b>Total</b>: {total}"\
-        f"\n• <b>Done</b>: {done}"\
-        f"\n• <b>Failed</b>: {failed}"\
-        f"\n• <b>Pending</b>: {pending}"\
+        f"\n\n<b>Summary</b>"
+        f"\n• <b>Total</b>: {total}"
+        f"\n• <b>Done</b>: {done}"
+        f"\n• <b>Failed</b>: {failed}"
+        f"\n• <b>Pending</b>: {pending}"
         f"\n• <b>Working</b>: {working}"
     )
 
@@ -169,8 +169,9 @@ def _compose_notification_message(insights, summary, batch_verified, verificatio
 
     details += f"\n\n<b>Items with destination set</b>: {with_target_path}"
 
-    failed_items: List[Dict[str, Any]] = insights.get("failed_items", [])
+    failed_items: list[dict[str, Any]] = insights.get("failed_items", [])
     if failed_items:
+
         def shorten(path: str, limit: int = 96) -> str:
             if path is None:
                 return ""
@@ -179,29 +180,30 @@ def _compose_notification_message(insights, summary, batch_verified, verificatio
 
         failed_lines = []
         for it in failed_items[:20]:
-            fname = it.get("filename") or (it.get("full_path") and it.get("full_path").split("/")[-1]) or "?"
+            fp = it.get("full_path")
+            fname = it.get("filename") or (fp and fp.split("/")[-1]) or "?"
             status = it.get("status") or "FAILED"
             path_preview = shorten(it.get("full_path") or "")
             failed_lines.append(
-                f"• <b>{html.escape(str(status))}</b> — <code>{html.escape(str(fname))}</code>\n    <code>{html.escape(path_preview)}</code>"
+                f"• <b>{html.escape(str(status))}</b> — <code>{html.escape(str(fname))}</code>\n"
+                f"    <code>{html.escape(path_preview)}</code>"
             )
 
         more_note = ""
         if len(failed_items) > 20:
             more_note = f"\n… and {len(failed_items) - 20} more"
 
-        details += f"\n\n<b>Failures</b>\n" + "\n".join(failed_lines) + more_note
-
+        details += "\n\n<b>Failures</b>\n" + "\n".join(failed_lines) + more_note
 
     if len(unique_filenames) > 0:
-        details += f"\n\n<b>Unique filenames:</b>\n"
+        details += "\n\n<b>Unique filenames:</b>\n"
         for unique_filename in unique_filenames:
             details += f"• {unique_filename}\n"
 
         details += "\n"
 
     if verification_details is not None and len(verification_details) > 0:
-        details += f"\n\n<b>Batch verification detail:</b>\n"
+        details += "\n\n<b>Batch verification detail:</b>\n"
         for filename, verification_detail in verification_details.items():
             size_ok = verification_detail.get("size", False)
             hash_ok = verification_detail.get("hash")
@@ -222,7 +224,7 @@ def _compose_notification_message(insights, summary, batch_verified, verificatio
     return message.strip()
 
 
-def _split_messages_to_prevent_message_too_long_error(message):
+def _split_messages_to_prevent_message_too_long_error(message: str | None) -> list[str]:
     # Split the message into smaller chunks if it's too long to send.'
     if message is None:
         return []
@@ -232,9 +234,9 @@ def _split_messages_to_prevent_message_too_long_error(message):
     if len(text) <= max_len:
         return [text]
 
-    chunks: List[str] = []
+    chunks: list[str] = []
 
-    def flush(buffer: List[str]):
+    def flush(buffer: list[str]) -> None:
         if not buffer:
             return
         combined = "\n".join(buffer)
@@ -251,7 +253,7 @@ def _split_messages_to_prevent_message_too_long_error(message):
 
     # Prefer splitting by paragraphs, then lines, then hard chunks
     paragraphs = text.split("\n\n")
-    buffer: List[str] = []
+    buffer: list[str] = []
     for para in paragraphs:
         if len(para) <= max_len:
             trial = ("\n\n".join(buffer + [para])).strip("\n")
@@ -282,31 +284,28 @@ def _split_messages_to_prevent_message_too_long_error(message):
     flush(buffer)
     return chunks
 
+
 @_activity_logger.trace("_handle_notification")
-def _handle_notification(topic, payload_bytes):
+def _handle_notification(topic: str, payload_bytes: bytes) -> None:
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("mqtt.topic", str(topic))
 
     preview = payload_bytes[:256]
-    _activity_logger.debug(f"Message on '{topic}': {preview}")
+    _activity_logger.debug(f"Message on '{topic}': {preview!r}")
 
     payload = json.loads(payload_bytes, object_hook=obj_dump_deserializer)
     batch_verified = payload.get("verified", False)
     verification_details = payload.get("verification_details", {})
     insights = _get_insights_from_payload(payload)
     summary = _get_summary_from_payload(payload)
-    message = _compose_notification_message(
-        insights, summary, batch_verified, verification_details
-    )
+    message = _compose_notification_message(insights, summary, batch_verified, verification_details)
     messages = _split_messages_to_prevent_message_too_long_error(message)
 
     for msg in messages:
         send_telegram_message(msg)
 
 
-def handle_notification_messages():
+def handle_notification_messages() -> None:
     _activity_logger.debug("Starting to listen for notification messages...")
-    _notification_agent.start_reading(
-        message_handler=_handle_notification, background=False
-    )
+    _notification_agent.start_reading(message_handler=_handle_notification, background=False)

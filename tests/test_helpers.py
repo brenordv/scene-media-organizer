@@ -25,8 +25,18 @@ def test_select_new_files_empty_inputs():
 
 def test_parse_work_item_row_maps_twelve_columns_including_attempts():
     row = (
-        "id-1", "/a/x.mkv", "x.mkv", "/a", "/dest", "WORKING",
-        True, False, "2026-01-01", "2026-01-02", "cache-1", 3,
+        "id-1",
+        "/a/x.mkv",
+        "x.mkv",
+        "/a",
+        "/dest",
+        "WORKING",
+        True,
+        False,
+        "2026-01-01",
+        "2026-01-02",
+        "cache-1",
+        3,
     )
     assert parse_work_item_row(row) == {
         "id": "id-1",

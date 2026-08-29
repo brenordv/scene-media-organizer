@@ -11,30 +11,30 @@ def sanitize_string_for_filename(input_str: str) -> str:
     result = []
 
     for c in input_str:
-        if c in '<>|?*\\/':
+        if c in "<>|?*\\/":
             # Replace filesystem-unsafe characters with underscores
-            result.append('_')
-        elif c == ' ':
+            result.append("_")
+        elif c == " ":
             # Replace spaces with hyphens for better readability
-            result.append('-')
+            result.append("-")
         elif c in "'`\":":
             # Remove apostrophes, quotes, backticks, and colons
-            result.append('')
-        elif c.isalnum() or c in '.-_':
+            result.append("")
+        elif c.isalnum() or c in ".-_":
             # Keep alphanumeric, dots, hyphens, and underscores
             result.append(c)
-        elif c == '&':
+        elif c == "&":
             # Replacing & with the word "and"
-            result.append('and')
+            result.append("and")
         else:
             # Replace any other special characters with underscores
-            result.append('_')
+            result.append("_")
 
     # Join the characters and ensure the filename doesn't start or end with dots
-    sanitized = ''.join(result).strip('.')
+    sanitized = "".join(result).strip(".")
 
     # Removing _ from the beginning or end of a filename
-    sanitized = sanitized.strip('_')
+    sanitized = sanitized.strip("_")
 
     # Capitalize the first letter (must be the last thing)
     sanitized = sanitized[0].upper() + sanitized[1:]

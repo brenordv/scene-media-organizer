@@ -33,10 +33,14 @@ ENV_FLAG_MAP = {
 def add_config_arguments(parser: argparse.ArgumentParser) -> None:
     for dest, env_name in ENV_FLAG_MAP.items():
         flag = "--" + dest.replace("_", "-")
-        parser.add_argument(flag, dest=dest, default=None, metavar="VALUE",
-                            help=f"Sets {env_name}.")
-    parser.add_argument("--env-file", dest="env_file", default=None, metavar="PATH",
-                        help="Load fallback values from this file instead of ./.env.")
+        parser.add_argument(flag, dest=dest, default=None, metavar="VALUE", help=f"Sets {env_name}.")
+    parser.add_argument(
+        "--env-file",
+        dest="env_file",
+        default=None,
+        metavar="PATH",
+        help="Load fallback values from this file instead of ./.env.",
+    )
 
 
 def apply_config(args: argparse.Namespace) -> None:
@@ -53,6 +57,5 @@ def require_env(*names: str) -> None:
     missing = [name for name in names if not os.environ.get(name)]
     if missing:
         print(f"Missing required configuration: {', '.join(missing)}", file=sys.stderr)
-        print("Provide values as CLI flags, environment variables, or .env entries.",
-              file=sys.stderr)
+        print("Provide values as CLI flags, environment variables, or .env entries.", file=sys.stderr)
         sys.exit(2)

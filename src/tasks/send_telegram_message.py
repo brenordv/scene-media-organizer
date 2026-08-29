@@ -1,3 +1,5 @@
+from typing import Any
+
 import requests
 from opentelemetry import trace
 
@@ -15,8 +17,7 @@ def send_telegram_message(message: str) -> bool:
 
     if not token or not chat_id:
         _activity_logger.error(
-            "Missing Telegram configuration. "
-            "Ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set."
+            "Missing Telegram configuration. " "Ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set."
         )
         return False
 
@@ -25,7 +26,7 @@ def send_telegram_message(message: str) -> bool:
 
     parse_mode = get_env("TELEGRAM_PARSE_MODE") or "HTML"
 
-    payload: dict = {
+    payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": message,
         "disable_web_page_preview": to_bool_env("TELEGRAM_DISABLE_WEB_PREVIEW", True),
@@ -41,9 +42,7 @@ def send_telegram_message(message: str) -> bool:
             span.set_attribute("http.status_code", response.status_code)
 
         if not response.ok:
-            _activity_logger.error(
-                f"Telegram API HTTP error {response.status_code}: {response.text}"
-            )
+            _activity_logger.error(f"Telegram API HTTP error {response.status_code}: {response.text}")
             return False
 
         data = response.json()
@@ -56,5 +55,3 @@ def send_telegram_message(message: str) -> bool:
     except Exception as exc:
         _activity_logger.error(f"Error sending Telegram message: {exc}")
         return False
-
-

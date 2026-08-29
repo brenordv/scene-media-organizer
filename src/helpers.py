@@ -1,10 +1,11 @@
 """Pure helpers with no configuration, service, or package dependencies.
 Tests import this module directly; keep it stdlib-only and side-effect free."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 
-def select_new_files(files_found, existing_filenames):
+def select_new_files(files_found: Iterable[tuple[str, str]], existing_filenames: Iterable[str]) -> list[str]:
     """files_found: iterable of (full_path, filename) tuples.
     existing_filenames: iterable of filename strings already in the queue.
     Returns the full paths whose filename is not yet known."""
@@ -12,7 +13,7 @@ def select_new_files(files_found, existing_filenames):
     return [full_path for full_path, filename in files_found if filename not in existing]
 
 
-def parse_work_item_row(row):
+def parse_work_item_row(row: Sequence[Any]) -> dict[str, Any]:
     return {
         "id": row[0],
         "full_path": row[1],
@@ -30,8 +31,8 @@ def parse_work_item_row(row):
 
 
 def partition_open_batches(
-    rows: Iterable[tuple],
-) -> tuple[tuple | None, list]:
+    rows: Iterable[tuple[Any, ...]],
+) -> tuple[tuple[Any, ...] | None, list[Any]]:
     """Split the open batches into the one to resume and the stale rest.
 
     Args:

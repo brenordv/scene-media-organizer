@@ -1,36 +1,52 @@
+import os
 import re
 import zipfile
-from typing import Pattern
-import os
+from re import Pattern
 
 # Any file ending in one of these is almost certainly compressed
 COMPRESSED_EXTENSIONS = (
-    '.zip', '.rar', '.7z',
-    '.gz', '.gzip', '.tgz', '.tar.gz', '.tar.gzip',
-    '.bz2', '.bzip2', '.tbz', '.tbz2', '.tar.bz2',
-    '.xz', '.txz', '.tar.xz',
-    '.lz', '.lzma', '.lzop',
-    '.Z', '.z'  # old Unix compress
+    ".zip",
+    ".rar",
+    ".7z",
+    ".gz",
+    ".gzip",
+    ".tgz",
+    ".tar.gz",
+    ".tar.gzip",
+    ".bz2",
+    ".bzip2",
+    ".tbz",
+    ".tbz2",
+    ".tar.bz2",
+    ".xz",
+    ".txz",
+    ".tar.xz",
+    ".lz",
+    ".lzma",
+    ".lzop",
+    ".Z",
+    ".z",  # old Unix compress
 )
 
 # Patterns for multipart archives
-MULTIPART_PATTERNS: tuple[Pattern, ...] = (
-    re.compile(r'\.part\d+\.rar$', re.IGNORECASE),  # foo.part01.rar
-    re.compile(r'\.r\d{2,}$',       re.IGNORECASE),  # foo.r00, foo.r001
-    re.compile(r'\.z\d{2,}$',       re.IGNORECASE),  # foo.z01, foo.z001
-    re.compile(r'\.7z\.\d{3,}$',    re.IGNORECASE),  # foo.7z.001
+MULTIPART_PATTERNS: tuple[Pattern[str], ...] = (
+    re.compile(r"\.part\d+\.rar$", re.IGNORECASE),  # foo.part01.rar
+    re.compile(r"\.r\d{2,}$", re.IGNORECASE),  # foo.r00, foo.r001
+    re.compile(r"\.z\d{2,}$", re.IGNORECASE),  # foo.z01, foo.z001
+    re.compile(r"\.7z\.\d{3,}$", re.IGNORECASE),  # foo.7z.001
 )
 
 MAGIC_SIGNATURES = {
-    b'\x1f\x8b':           "gzip",      # .gz, .tgz, .tar.gz
-    b'BZh':                "bzip2",     # .bz2
-    b'\xfd7zXZ\x00':       "xz/lzma2",  # .xz, .txz, .tar.xz
-    b'7z\xbc\xaf\x27\x1c': "7z",        # .7z
-    b'Rar!\x1a\x07\x00':   "rar (v4)",  # .rar
-    b'Rar!\x1a\x07\x01\x00':"rar (v5)",  # .rar
-    b'\x1f\x9d':           "compress (.Z)",  # old Unix .Z
-    b'LZIP':               "lzip",      # .lz
+    b"\x1f\x8b": "gzip",  # .gz, .tgz, .tar.gz
+    b"BZh": "bzip2",  # .bz2
+    b"\xfd7zXZ\x00": "xz/lzma2",  # .xz, .txz, .tar.xz
+    b"7z\xbc\xaf\x27\x1c": "7z",  # .7z
+    b"Rar!\x1a\x07\x00": "rar (v4)",  # .rar
+    b"Rar!\x1a\x07\x01\x00": "rar (v5)",  # .rar
+    b"\x1f\x9d": "compress (.Z)",  # old Unix .Z
+    b"LZIP": "lzip",  # .lz
 }
+
 
 def is_compressed_file(path: str) -> bool:
     """
@@ -60,7 +76,7 @@ def is_compressed_file(path: str) -> bool:
 
     # 4) magic‐byte inspection
     try:
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             header = f.read(8)
     except Exception:
         return False
@@ -74,8 +90,8 @@ def is_compressed_file(path: str) -> bool:
 
 
 if __name__ == "__main__":
-    import tempfile
     import os
+    import tempfile
 
     def create_file(name: str, content: bytes = b"") -> str:
         """Helper to write a file under a temp dir."""
@@ -94,8 +110,8 @@ if __name__ == "__main__":
 
         # 2) Multipart patterns
         tests.append((create_file("data.part01.rar"), True))
-        tests.append((create_file("chunk.z01"),          True))
-        tests.append((create_file("photo.r00"),           True))
+        tests.append((create_file("chunk.z01"), True))
+        tests.append((create_file("photo.r00"), True))
 
         # 3) Magic-byte inspection
         # 3a) GZIP header (0x1f,0x8b,...)
@@ -127,4 +143,5 @@ if __name__ == "__main__":
         # Exit with non-zero code on failure (useful if you integrate into CI)
         if failed:
             import sys
+
             sys.exit(1)

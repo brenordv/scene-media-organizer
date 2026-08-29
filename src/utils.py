@@ -4,15 +4,16 @@ import hashlib
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any
 
-from simple_log_factory_ext_otel import otel_log_factory, TracedLogger, instrument_requests
+from simple_log_factory_ext_otel import TracedLogger, otel_log_factory
 
 _all_loggers: dict[str, TracedLogger] = {}
 _log = logging.getLogger(__name__)
 
 # Resolve malloc_trim once at import time.
 # Available on glibc (Debian/python:*-slim); silently absent elsewhere.
+_malloc_trim: Any = None
 try:
     _libc = ctypes.CDLL("libc.so.6")
     _malloc_trim = _libc.malloc_trim
@@ -20,11 +21,10 @@ try:
     _malloc_trim.restype = ctypes.c_int
 except OSError:
     _malloc_trim = None
-    _log.info("malloc_trim unavailable (non-glibc platform); "
-              "idle memory release will use gc.collect() only.")
+    _log.info("malloc_trim unavailable (non-glibc platform); " "idle memory release will use gc.collect() only.")
 
 
-def to_int(value: Optional[Union[str, int]], default: int) -> int:
+def to_int(value: str | int | None, default: int) -> int:
     try:
         if value is None:
             return default
@@ -33,7 +33,7 @@ def to_int(value: Optional[Union[str, int]], default: int) -> int:
         return default
 
 
-def get_env(name: str) -> Optional[str]:
+def get_env(name: str) -> str | None:
     value = os.environ.get(name)
     if value is not None:
         value = value.strip()
@@ -49,12 +49,13 @@ def to_bool_env(name: str, default: bool) -> bool:
 
 def _sha256(path: Path) -> str:
     hasher = hashlib.sha256()
-    with path.open('rb') as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b''):
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
 
-def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
+
+def get_otel_log_handler(log_name: str, **kwargs: Any) -> TracedLogger:
     cached = _all_loggers.get(log_name)
     if cached is not None:
         return cached
@@ -62,9 +63,7 @@ def get_otel_log_handler(log_name: str, **kwargs) -> TracedLogger:
     otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
 
     if not otel_endpoint:
-        raise ValueError(
-            "OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set."
-        )
+        raise ValueError("OTEL_EXPORTER_OTLP_ENDPOINT environment variable must be set.")
 
     service_name = "media-organizer"
 
@@ -96,8 +95,7 @@ def release_idle_memory() -> None:
         if _malloc_trim is not None:
             result = _malloc_trim(0)
             if result == 0:
-                _log.debug("malloc_trim(0) returned 0 — "
-                           "no memory could be released to the OS.")
+                _log.debug("malloc_trim(0) returned 0 — " "no memory could be released to the OS.")
     except Exception as e:
         _log.exception(f"Unexpected error during idle memory release. Error: {e}")
 

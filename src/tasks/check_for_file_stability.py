@@ -9,7 +9,7 @@ _logger = get_otel_log_handler("Check File Stability", unique_handler_types=True
 
 
 @_logger.trace("check_is_file_stable")
-def check_is_file_stable(filename):
+def check_is_file_stable(filename: str) -> bool:
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("file.path", str(filename))
@@ -46,9 +46,6 @@ def check_is_file_stable(filename):
 
         return stable_checks == stable_checks_required
 
-    except (OSError, IOError) as e:
-        _logger.error(
-            f"Error checking for file stability. "
-            f"Assuming it is not stable. File: {str(e)}"
-        )
+    except OSError as e:
+        _logger.error(f"Error checking for file stability. " f"Assuming it is not stable. File: {str(e)}")
         return False
