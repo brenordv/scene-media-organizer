@@ -144,6 +144,28 @@ uv run python on_demand.py missing    # queue on-disk files not yet tracked, the
 ```
 Add `--yes` to skip the confirmation prompt in non-interactive runs.
 
+Any flag from the [Configuration](#command-line-flags) table can go on the command line, including the secrets. This is the "a secret manager can inject secrets this way" path: the manager resolves each value and hands it to `on_demand.py` as a flag. A batch run with the sensitive values (Postgres password, MQTT password, Telegram bot token) passed inline:
+
+```bash
+uv run python on_demand.py batch \
+  --watch-folder /data/watch \
+  --movies-base-folder /data/movies \
+  --series-base-folder /data/series \
+  --api-url http://media-identifier:8080 \
+  --otel-endpoint http://otel-collector:4317 \
+  --postgres-host db \
+  --postgres-user smo \
+  --postgres-password 'REPLACE_WITH_PG_PASSWORD' \
+  --mqtt-host mqtt \
+  --mqtt-username smo \
+  --mqtt-password 'REPLACE_WITH_MQTT_PASSWORD' \
+  --telegram-bot-token 'REPLACE_WITH_BOT_TOKEN' \
+  --telegram-chat-id 123456789 \
+  --yes
+```
+
+Swap `batch` for `missing` to sweep on-disk files into the queue first. Remember that inline flags are visible in the process list while the run lasts and that an interactive shell keeps them in history; when that matters, have the secret manager write a transient file and pass `--env-file` instead (see [Configuration](#configuration)).
+
 ### Convenience scripts
 - Linux: `start.sh`
 - Windows: `start.bat`
