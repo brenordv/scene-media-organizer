@@ -173,12 +173,15 @@ class SecretStore:
     Args:
         fetch: Reads one secret by name and returns its value, or None when the secret does not exist.
         source: Where the secrets come from, for messages and logs; kept as the ``source`` attribute.
+        uses_plain_http: Whether reads travel to the secret manager unencrypted; kept as the ``uses_plain_http``
+            attribute.
     """
 
-    def __init__(self, fetch: Callable[[str], str | None], source: str) -> None:
+    def __init__(self, fetch: Callable[[str], str | None], source: str, uses_plain_http: bool = False) -> None:
         self._fetch = fetch
         self._values: dict[str, str | None] = {}
         self.source = source
+        self.uses_plain_http = uses_plain_http
 
     def __repr__(self) -> str:
         return f"SecretStore(source={self.source!r}, cached={len(self._values)})"
@@ -239,7 +242,7 @@ def get_secret_store() -> SecretStore:
 
     if _default_store is None:
         bootstrap = InfisicalBootstrap.from_env(os.environ)
-        _default_store = SecretStore(InfisicalFetcher(bootstrap).fetch, bootstrap.source)
+        _default_store = SecretStore(InfisicalFetcher(bootstrap).fetch, bootstrap.source, bootstrap.uses_plain_http)
     return _default_store
 
 

@@ -77,8 +77,9 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
                 try_again.append(file_to_retry)
                 continue
         except IdentifierUnavailableError:
+            # Not retried in this batch: the identifier call already retried with backoff. The item stays WORKING
+            # with its attempt refunded, and the sweep below returns it to PENDING for a later batch.
             unavailable_count += 1
-            try_again.append(item)
         except Exception as e:
             _activity_tracker.error(f"{tag} Error processing item [{item['id']}]: {str(e)}")
             item["status"] = "FAILED_PROCESSING"
@@ -87,7 +88,7 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
     if len(try_again) > 0:
         _activity_tracker.debug(f"{tag} Retrying to process {len(try_again)} items...")
 
-    # Retry. Items still waiting on the identifier stay WORKING and the sweep below returns them to PENDING.
+    # Retry.
     for item in try_again:
         try:
             _process_batch_item(item)

@@ -186,7 +186,8 @@ def describe_migration_failure(error: Exception) -> str:
         The ``MigrationError`` message, or the database error's class and SQLSTATE.
     """
     if isinstance(error, psycopg.Error):
-        return f"the database could not be reached or queried ({type(error).__name__}, SQLSTATE {error.sqlstate})"
+        sqlstate = f", SQLSTATE {error.sqlstate}" if error.sqlstate else ""
+        return f"the database could not be reached or queried ({type(error).__name__}{sqlstate})"
     return str(error)
 
 

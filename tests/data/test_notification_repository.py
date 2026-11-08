@@ -161,5 +161,10 @@ def test_on_message_passes_bytes_to_handler(repository: NotificationRepository) 
     assert isinstance(received[0][1], bytes)
 
 
-def test_is_connected_reflects_the_client(repository: NotificationRepository) -> None:
-    assert repository.is_connected is False
+@pytest.mark.parametrize("client_connected", [True, False])
+def test_is_connected_reflects_the_client(
+    repository: NotificationRepository, monkeypatch: pytest.MonkeyPatch, client_connected: bool
+) -> None:
+    monkeypatch.setattr(repository._client, "is_connected", lambda: client_connected)
+
+    assert repository.is_connected is client_connected

@@ -324,4 +324,5 @@ def test_default_store_is_built_once_from_the_environment_without_contacting_inf
 
     assert get_secret_store() is store
     assert store.source == BOOTSTRAP.source
+    assert store.uses_plain_http is False
     assert fake.constructed == []

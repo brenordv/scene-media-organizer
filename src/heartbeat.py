@@ -1,6 +1,7 @@
-"""The service's heartbeat file: when it last checked its dependencies and what it found.
+"""The heartbeat file: when the service last checked its dependencies and what it found.
 
-The container health check reads this file (``healthcheck.py``), so the format and location are shared with it.
+The file is JSON (``time``, ``postgres``, ``mqtt``) under a fixed name in the system temp folder. The name and the
+format are a contract with readers outside this package, so changing either needs the readers changed too.
 """
 
 import json

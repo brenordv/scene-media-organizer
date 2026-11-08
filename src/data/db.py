@@ -1,5 +1,4 @@
-"""Application-level pool lifecycle. Entry points call init_pool() after the settings are loaded and before any
-repository module is imported."""
+"""The process-wide PostgreSQL connection pool: its connection string, creation, health probe and shutdown."""
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict

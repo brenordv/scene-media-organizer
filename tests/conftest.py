@@ -1,7 +1,9 @@
 """Test-session setup: the suite runs without Postgres, MQTT, Telegram, Infisical, the media identifier or an OTEL
 collector."""
 
+import functools
 import os
+import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,6 +27,7 @@ def pytest_configure(config: pytest.Config) -> None:
         os.environ.pop(name, None)
 
     root = Path(tempfile.mkdtemp(prefix="smo-tests-"))
+    config.add_cleanup(functools.partial(shutil.rmtree, root, ignore_errors=True))
     for name, folder in (("WATCH_FOLDER", "watch"), ("MOVIES_BASE_FOLDER", "movies"), ("SERIES_BASE_FOLDER", "series")):
         (root / folder).mkdir()
         os.environ[name] = str(root / folder)

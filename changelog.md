@@ -8,7 +8,7 @@ Settings move to Infisical, the database schema is managed by migrations at star
 1. Stop the 2.x service and run `sql/grant_existing_database.sql` (see readme, "Database"). The 3.0.0 migrations alter the existing tables, which needs a role that owns them.
 2. Create the `MEDIA_ORGANIZER_*` secrets in Infisical and a machine identity that can read them; pass its `INFISICAL_*` bootstrap variables to the container.
 3. Point `MEDIA_ORGANIZER_MEDIA_IDENTIFIER_URL` at a media identifier 2.0 (its base URL, without `/api/guess`).
-4. Rotate the Telegram bot token: 2.x could write it to the `activity_tracker` table, OTEL logs and traces when sending failed.
+4. Rotate the Telegram bot token: 2.x could write it to the `activity_tracker` table, OTEL logs and traces when sending failed. Rows and telemetry that hold the old token stay readable until you delete or expire them (for example `DELETE FROM activity_tracker WHERE activity LIKE '%/bot%'`).
 5. Optionally run `on_demand.py recheck` to find media filed from identifier 1.x answers that 2.0 would file elsewhere.
 
 ### Breaking changes

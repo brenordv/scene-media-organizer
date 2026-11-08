@@ -124,16 +124,26 @@ def batch_side_effects(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 def test_process_batch_identifier_outage_logs_one_warning_and_leaves_items_for_the_sweep(
     recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch, batch_side_effects: list[str]
 ) -> None:
-    _identify_raises(monkeypatch, IdentifierUnavailableError("Media identifier unreachable (ConnectionError)"))
+    asked: list[str] = []
+
+    def unavailable_identify(path: str) -> dict[str, Any] | None:
+        asked.append(path)
+        raise IdentifierUnavailableError("Media identifier unreachable (ConnectionError)")
+
+    monkeypatch.setattr(processor_module, "identify_file", unavailable_identify)
     warnings: list[str] = []
     monkeypatch.setattr(processor_module._activity_tracker, "warning", warnings.append)
-    second = dict(_item(media_file), id="item-2")
+    second = dict(_item(media_file, attempts=3), id="item-2")
 
-    process_batch([_item(media_file), second], "batch-1")
+    process_batch([_item(media_file, attempts=3), second], "batch-1")
 
+    assert len(asked) == 2
     assert len(warnings) == 1
-    assert "4 identification attempt(s)" in warnings[0]
-    assert all(update["status"] == "WORKING" for update in recorder.updates)
+    assert "2 identification attempt(s)" in warnings[0]
+    assert [(update["id"], update["attempts"], update["status"]) for update in recorder.updates] == [
+        ("item-1", 2, "WORKING"),
+        ("item-2", 2, "WORKING"),
+    ]
     assert batch_side_effects == ["sweep", "done", "notify"]
 
 

@@ -75,19 +75,20 @@ def test_split_messages_none_is_no_chunk() -> None:
     assert _split_messages_to_prevent_message_too_long_error(None) == []
 
 
-def test_split_messages_long_message_respects_the_limit() -> None:
-    paragraphs = "\n\n".join("x" * 1000 for _ in range(10))
-    single_line = "y" * 9000
+@pytest.mark.parametrize("message", ["\n\n".join("x" * 1000 for _ in range(10)), "y" * 9000])
+def test_split_messages_long_message_respects_the_limit(message: str) -> None:
+    chunks = _split_messages_to_prevent_message_too_long_error(message)
 
-    for message in (paragraphs, single_line):
-        chunks = _split_messages_to_prevent_message_too_long_error(message)
-        assert len(chunks) > 1
-        assert all(len(chunk) <= MAX_MESSAGE_LENGTH for chunk in chunks)
-        assert "".join(chunks).replace("\n", "") == message.replace("\n", "")
+    assert len(chunks) > 1
+    assert all(len(chunk) <= MAX_MESSAGE_LENGTH for chunk in chunks)
+    assert "".join(chunks).replace("\n", "") == message.replace("\n", "")
 
 
-def test_is_connected_reports_the_receiver_connection() -> None:
-    assert receiver_module.is_connected() is False
+@pytest.mark.parametrize("broker_connected", [True, False])
+def test_is_connected_reports_the_receiver_connection(monkeypatch: pytest.MonkeyPatch, broker_connected: bool) -> None:
+    monkeypatch.setattr(receiver_module._notification_agent._client, "is_connected", lambda: broker_connected)
+
+    assert receiver_module.is_connected() is broker_connected
 
 
 def test_handle_notification_sends_the_composed_report(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,17 +30,20 @@ def test_activity_tracker_debug_level_writes_everything(fake_db: FakeDatabase) -
     assert _activity_inserts(fake_db) == ["debug line", "warning line"]
 
 
+def test_database_log_level_without_knob_is_the_tracker_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ACTIVITY_DB_LOG_LEVEL", raising=False)
+
+    assert database_log_level("DEBUG") == "DEBUG"
+
+
 @pytest.mark.parametrize(
     ("knob", "tracker_level", "expected"),
-    [(None, "DEBUG", "DEBUG"), ("INFO", "DEBUG", "INFO"), ("info", "WARNING", "WARNING"), ("ERROR", "INFO", "ERROR")],
+    [("INFO", "DEBUG", "INFO"), ("info", "WARNING", "WARNING"), ("ERROR", "INFO", "ERROR")],
 )
 def test_database_log_level_is_the_higher_of_knob_and_tracker(
-    monkeypatch: pytest.MonkeyPatch, knob: str | None, tracker_level: str, expected: str
+    monkeypatch: pytest.MonkeyPatch, knob: str, tracker_level: str, expected: str
 ) -> None:
-    if knob is None:
-        monkeypatch.delenv("ACTIVITY_DB_LOG_LEVEL", raising=False)
-    else:
-        monkeypatch.setenv("ACTIVITY_DB_LOG_LEVEL", knob)
+    monkeypatch.setenv("ACTIVITY_DB_LOG_LEVEL", knob)
 
     assert database_log_level(tracker_level) == expected
 

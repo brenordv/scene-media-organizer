@@ -1,5 +1,6 @@
 import pytest
 
+from src import secret_store
 from src.secret_store import SecretsError
 from src.settings import (
     MEDIA_IDENTIFIER_URL_SECRET,
@@ -70,8 +71,11 @@ def test_load_settings_with_telegram_set_has_no_warning(secret_values: dict[str,
     assert [level for level, _ in logger.lines] == ["info", "info"]
 
 
-def test_load_settings_warns_about_a_plain_http_infisical_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("INFISICAL_HOST", "http://infisical.lan")
+def test_load_settings_warns_about_a_plain_http_infisical_host(
+    monkeypatch: pytest.MonkeyPatch, secret_values: dict[str, str]
+) -> None:
+    store = secret_store.SecretStore(secret_values.get, "test secrets", uses_plain_http=True)
+    monkeypatch.setattr(secret_store, "_default_store", store)
     logger = RecordingLogger()
 
     load_settings(as_traced(logger))

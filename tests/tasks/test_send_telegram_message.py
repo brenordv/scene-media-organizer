@@ -87,11 +87,14 @@ def test_send_telegram_message_ok_false_body_returns_false(monkeypatch: pytest.M
 
 
 @pytest.mark.usefixtures("telegram_configured")
-def test_send_telegram_message_invalid_json_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_send_telegram_message_invalid_json_returns_false(
+    monkeypatch: pytest.MonkeyPatch, activity_lines: list[str]
+) -> None:
     error = requests.JSONDecodeError("Expecting value", "", 0)
     monkeypatch.setattr("requests.post", lambda url, **kwargs: _Response(200, error))
 
     assert send_telegram_message("report") is False
+    assert any("HTTP 200" in line and "no description" in line for line in activity_lines)
 
 
 def test_send_telegram_message_missing_configuration_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

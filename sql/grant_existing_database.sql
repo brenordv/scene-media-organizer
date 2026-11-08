@@ -6,7 +6,7 @@
 --
 --   psql -v ON_ERROR_STOP=1 -h <host> -U postgres -d postgres -f sql/grant_existing_database.sql
 --
--- Optional variables:
+-- Optional variables (the switches below are on whenever the variable is set, whatever its value):
 --   -v app_role=<name>      the role (default media_organizer); created when missing
 --   -v app_db=<name>        the existing database (default smo_watchdog)
 --   -v set_password=1       set a new password when the role already exists (also the fix when an earlier run was
@@ -45,7 +45,7 @@ SELECT format('ALTER DATABASE %I OWNER TO %I', :'app_db', :'app_role') \gexec
 
 \connect :app_db
 
--- A new table owner needs CREATE on the table's schema, so grant it before moving the tables.
+-- The migrations create the schema_migrations ledger and indexes in public, which needs CREATE there.
 SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'app_role') \gexec
 
 SELECT format('ALTER TABLE IF EXISTS %I OWNER TO %I', table_name, :'app_role')

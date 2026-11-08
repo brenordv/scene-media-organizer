@@ -54,7 +54,7 @@ def to_bool_env(name: str, default: bool) -> bool:
 
 
 def child_process_env() -> dict[str, str]:
-    """Return the environment handed to external tools (rsync, 7zz).
+    """Return the environment to start an external tool with.
 
     Only the variables a tool needs to run are passed on, so credentials held in this process's environment (the
     secret-manager bootstrap among them) never reach a child process.
@@ -203,7 +203,7 @@ def release_idle_memory() -> None:
         if _malloc_trim is not None:
             result = _malloc_trim(0)
             if result == 0:
-                _log.debug("malloc_trim(0) returned 0 — no memory could be released to the OS.")
+                _log.debug("malloc_trim(0) returned 0: no memory could be released to the OS.")
     except Exception as e:
         _log.exception(f"Unexpected error during idle memory release. Error: {e}")
 

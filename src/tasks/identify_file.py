@@ -66,7 +66,7 @@ def identify_file(full_path: str) -> dict[str, Any] | None:
     Transient answers (502, 503, 504) and network errors are retried with backoff before giving up.
 
     Args:
-        full_path: The file's path; the identifier also retries with the bare file name on its own.
+        full_path: The file's path, or its bare name.
 
     Returns:
         The media record for a 200 answer, or None when the answer is final and empty (204: not media or
@@ -84,6 +84,8 @@ def identify_file(full_path: str) -> dict[str, Any] | None:
         response = _request_identify(f"{media_identifier_base_url()}{GUESS_PATH}", full_path)
     except requests.RequestException as e:
         _record(span, "unavailable")
+        # The requests error quotes the request URL with the file path; the class name is enough for the work queue
+        # log, and the requests span records the detail.
         raise IdentifierUnavailableError(f"Media identifier unreachable ({type(e).__name__})") from None
 
     status_code = response.status_code

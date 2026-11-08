@@ -16,6 +16,7 @@ from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError
 from src.utils import get_otel_log_handler
 
 SEASON_FOLDER_PREFIX = "Season"
+STOPPED_EARLY_EXIT_CODE = 1
 
 Identify = Callable[[str], dict[str, Any] | None]
 
@@ -132,6 +133,23 @@ def recheck_filed_items(
         + (" (stopped early: the media identifier is unavailable)" if report.stopped_early else "")
     )
     return report
+
+
+def run_recheck(items: Iterable[dict[str, Any]], identify: Identify, movies_base: Path, series_base: Path) -> int:
+    """Recheck the items, print the report, and return the command's exit code.
+
+    Args:
+        items: Work items with ``filename`` and ``target_path``.
+        identify: Identifies a file name, as ``identify_file`` does.
+        movies_base: The movie library root.
+        series_base: The series library root.
+
+    Returns:
+        0 when every item was checked, ``STOPPED_EARLY_EXIT_CODE`` when the identifier became unavailable.
+    """
+    report = recheck_filed_items(items, identify, movies_base, series_base)
+    print(format_report(report))
+    return STOPPED_EARLY_EXIT_CODE if report.stopped_early else 0
 
 
 def format_report(report: RecheckReport) -> str:

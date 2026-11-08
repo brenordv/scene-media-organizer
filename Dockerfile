@@ -36,10 +36,9 @@ RUN apt-get update \
 # 7-Zip (7zz) pinned for reproducible builds, with the checksum GitHub publishes for the release asset. Do not go
 # below 26.02: earlier releases are open to CVE-2026-14266 (XZ decompression heap overflow, remote code execution),
 # and 7zz picks the handler from the file's content, whatever its name.
-ARG SEVENZIP_VERSION=2605
 ARG SEVENZIP_SHA256=22cf82fcc6eb7474f1d5bb4f02c0f8ebd573a718089d6833dc30f8350a3b232e
 RUN curl -fL -o /tmp/7z.tar.xz \
-      "https://github.com/ip7z/7zip/releases/download/26.05/7z${SEVENZIP_VERSION}-linux-x64.tar.xz" \
+      https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-x64.tar.xz \
  && echo "${SEVENZIP_SHA256}  /tmp/7z.tar.xz" | sha256sum -c - \
  && tar -xJ -C /tmp -f /tmp/7z.tar.xz \
  && mv /tmp/7zz /usr/local/bin/ \

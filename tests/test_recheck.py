@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from src.recheck import RecheckChange, format_report, library_location, recheck_filed_items
+from src.recheck import RecheckChange, format_report, library_location, recheck_filed_items, run_recheck
 from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError
 
 MOVIES = Path("/movies")
@@ -99,6 +99,21 @@ def test_format_report_lists_every_finding() -> None:
     assert "Not identified any more: 1" in text
     assert "a.mkv: no longer identified" in text
     assert "Stopped early" in text
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_exit_code"),
+    [({"id": "1", "media_type": "movie", "title": "A", "year": 2000}, 0), (IdentifierUnavailableError("down"), 1)],
+)
+def test_run_recheck_exit_code_tells_whether_every_item_was_checked(
+    capsys: pytest.CaptureFixture[str], answer: dict[str, Any] | Exception, expected_exit_code: int
+) -> None:
+    identify = _Identifier({"a.mkv": answer})
+
+    exit_code = run_recheck([_item("a.mkv", "/movies/A--2000")], identify, MOVIES, SERIES)
+
+    assert exit_code == expected_exit_code
+    assert "Unchanged:" in capsys.readouterr().out
 
 
 def test_format_report_lists_changes_and_failures() -> None:

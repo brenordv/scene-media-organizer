@@ -36,8 +36,8 @@ target-version = "py314"
 select = ["E", "F", "W", "I", "N", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-# The entry points apply configuration before importing src modules, because several of them read the environment
-# at import time.
+# The entry points apply configuration, load the settings and open the pool before importing the src modules that
+# read the environment or build repositories at import time.
 "main.py" = ["E402"]
 "on_demand.py" = ["E402"]
 

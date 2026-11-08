@@ -5,8 +5,6 @@ from pathlib import Path
 
 from src.config import add_config_arguments, apply_config, parse_command_line, require_env
 
-STOPPED_EARLY_EXIT_CODE = 1
-
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run scene-media-organizer maintenance commands.")
@@ -45,7 +43,7 @@ from src.batch_processor import process_batch
 from src.catch_up import queue_untracked_files
 from src.data.activity_logger import ActivityTracker
 from src.data.work_queue_manager import WorkQueueManager
-from src.recheck import format_report, recheck_filed_items
+from src.recheck import run_recheck
 from src.tasks.identify_file import identify_file
 
 _work_queue_manager = WorkQueueManager()
@@ -140,14 +138,12 @@ def on_demand_process_missing_add() -> None:
 def on_demand_recheck() -> int:
     """Print which filed media the identifier would now file elsewhere. Returns the exit code."""
     print("Re-identifying filed media; nothing is moved or changed.")
-    report = recheck_filed_items(
+    return run_recheck(
         _work_queue_manager.get_filed_items(),
         identify_file,
         Path(_movies_base_folder),
         Path(_series_base_folder),
     )
-    print(format_report(report))
-    return STOPPED_EARLY_EXIT_CODE if report.stopped_early else 0
 
 
 def main() -> int:

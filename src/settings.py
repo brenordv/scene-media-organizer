@@ -4,7 +4,6 @@ This module imports nothing that touches the database or the broker at import ti
 set up.
 """
 
-import os
 from dataclasses import dataclass, field
 
 from simple_log_factory_ext_otel import TracedLogger
@@ -109,7 +108,7 @@ def load_settings(logger: TracedLogger) -> None:
         ValueError: If a setting is set but invalid.
     """
     store = get_secret_store()
-    if os.environ.get("INFISICAL_HOST", "").strip().lower().startswith("http://"):
+    if store.uses_plain_http:
         logger.warning("INFISICAL_HOST uses plain http: the machine identity's client secret travels unencrypted.")
     logger.info(f"Reading settings from {store.source}")
 

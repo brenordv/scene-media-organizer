@@ -128,7 +128,14 @@ A migration that fails is rolled back and the process exits with code 1 and a me
 
 ### A dedicated role for the application
 
-Run the scripts in `sql/` with `psql` as a superuser, from a terminal: psql prompts for the role's password (`\password`), so it never lands in a file, the shell history or the server log. With Docker, that means `docker exec -it <postgres-container> psql ...`. Both scripts stop at the first error and can be run again.
+Run the scripts in `sql/` with `psql` as a superuser, from a terminal: psql prompts for the role's password (`\password`), so it never lands in a file, the shell history or the server log. Both scripts stop at the first error and can be run again.
+
+When PostgreSQL runs in Docker, copy the script into the container first, then run psql there with a terminal attached:
+
+```bash
+docker cp sql/grant_existing_database.sql <postgres-container>:/tmp/
+docker exec -it <postgres-container> psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f /tmp/grant_existing_database.sql
+```
 
 **Fresh install** - creates the role `media_organizer` and the database `smo_watchdog` it owns:
 

@@ -4,6 +4,7 @@ import psycopg
 import pytest
 
 from src import startup as startup_module
+from src.data.db import POSTGRES_CONNECTION_STRING_SECRET
 from src.data.migrations import MigrationError
 from src.settings import MQTT_HOST_SECRET
 from src.startup import prepare_services
@@ -41,6 +42,34 @@ def test_prepare_services_missing_setting_exits_2_before_migrating(
     assert migrations == []
     assert MQTT_HOST_SECRET in capsys.readouterr().err
     assert logger.lines[-1][0] == "error"
+
+
+def test_prepare_services_invalid_connection_string_exits_2_without_echoing_it(
+    secret_values: dict[str, str], migrations: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret_values[POSTGRES_CONNECTION_STRING_SECRET] = "postgresql://media_organizer:hunter2@db.test:5432"
+
+    with pytest.raises(SystemExit) as exc:
+        prepare_services(as_traced(RecordingLogger()))
+
+    stderr = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert migrations == []
+    assert POSTGRES_CONNECTION_STRING_SECRET in stderr
+    assert "hunter2" not in stderr
+
+
+def test_prepare_services_invalid_activity_level_exits_2(
+    monkeypatch: pytest.MonkeyPatch, migrations: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("ACTIVITY_DB_LOG_LEVEL", "VERBOSE")
+
+    with pytest.raises(SystemExit) as exc:
+        prepare_services(as_traced(RecordingLogger()))
+
+    assert exc.value.code == 2
+    assert migrations == []
+    assert "ACTIVITY_DB_LOG_LEVEL" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
