@@ -6,22 +6,40 @@ from pathlib import Path
 
 from opentelemetry import trace
 
-from src.utils import get_otel_log_handler, to_bool_env
+from src.utils import child_process_env, get_otel_log_handler, to_bool_env
 
 _logger = get_otel_log_handler("Copy File", unique_handler_types=True)
 
 
+class CopyPermissionError(Exception):
+    """A copy failed because the process lacks permission for the source, the destination or the ownership change."""
+
+
 @_logger.trace("copy_file")
-def copy_file(src_file: str, dst_path_str: str) -> bool:
+def copy_file(src_file: str, dst_dir: str | Path) -> bool:
+    """Copy a file into a directory, retrying up to five times with a growing delay.
+
+    Args:
+        src_file: The file to copy.
+        dst_dir: The destination directory; created when missing.
+
+    Returns:
+        True when the copy (and the optional ownership change) succeeded, False when the source is missing or every
+        attempt failed.
+
+    Raises:
+        CopyPermissionError: On the first permission failure. It is not retried, because waiting does not change
+            permissions.
+    """
     span = trace.get_current_span()
     src_path = Path(src_file)
-    dst_path = Path(dst_path_str)
+    dst_path = Path(dst_dir)
 
     if span.is_recording():
         span.set_attributes(
             {
                 "file.source_path": str(src_file),
-                "file.destination_path": str(dst_path_str),
+                "file.destination_path": str(dst_dir),
                 "file.name": src_path.name,
             }
         )
@@ -35,15 +53,13 @@ def copy_file(src_file: str, dst_path_str: str) -> bool:
         _logger.warning(f"Source file {src_file} does not exist. Will not copy.")
         return False
 
-    if not dst_path.exists():
-        dst_path.mkdir(parents=True, exist_ok=True)
-
     dst_file = dst_path.joinpath(src_path.name)
 
     for i in range(max_retries):
         try:
             _logger.debug(f"Copying file [{src_path.name}] to [{dst_path}]")
 
+            dst_path.mkdir(parents=True, exist_ok=True)
             _copy_file(src_file, dst_file, copy_using_rsync)
 
             if change_ownership:
@@ -51,6 +67,8 @@ def copy_file(src_file: str, dst_path_str: str) -> bool:
                 _change_destination_ownership(dst_file, src_file)
 
             return True
+        except PermissionError as e:
+            raise CopyPermissionError(str(e)) from e
         except Exception as e:
             _logger.warning(f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}")
             delay_seconds = base_delay_seconds * (i + 1)
@@ -62,7 +80,7 @@ def copy_file(src_file: str, dst_path_str: str) -> bool:
 
 
 @_logger.trace("_copy_file")
-def _copy_file(src_file: str, dst_path_str: str, copy_using_rsync: bool) -> None:
+def _copy_file(src_file: str, dst_file: Path, copy_using_rsync: bool) -> None:
     span = trace.get_current_span()
     copy_method = "rsync" if copy_using_rsync else "shutil"
 
@@ -81,22 +99,29 @@ def _copy_file(src_file: str, dst_path_str: str, copy_using_rsync: bool) -> None
             "--xattrs",
             "--acls",
             src_file,
-            dst_path_str,
+            str(dst_file),
         ]
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as p:
+        with subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=child_process_env()
+        ) as p:
             assert p.stdout is not None  # stdout=PIPE guarantees a stream
+            permission_denied_line = None
             for line in p.stdout:
                 _logger.debug(line.rstrip())
+                if "Permission denied" in line:
+                    permission_denied_line = line.strip()
 
             exit_code = p.wait()
             success = exit_code == 0
 
             _logger.debug(f"rsync exit code: {exit_code} / Success: {success}")
             if not success:
+                if permission_denied_line is not None:
+                    raise PermissionError(permission_denied_line)
                 raise Exception("Failed to copy file using rsync")
 
     else:
-        shutil.copy(src_file, dst_path_str)
+        shutil.copy(src_file, dst_file)
 
 
 @_logger.trace("_change_destination_ownership")

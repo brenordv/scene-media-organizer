@@ -1,5 +1,6 @@
+import os
 from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import psycopg
 from opentelemetry import trace
@@ -8,7 +9,32 @@ from src.data.base_repository import BaseRepository
 
 _log_levels = {"NOTSET": 0, "DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
+DB_LOG_LEVEL_SETTING = "ACTIVITY_DB_LOG_LEVEL"
+DEFAULT_DB_LOG_LEVEL = "DEBUG"
+
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def database_log_level(tracker_level: str) -> str:
+    """Return the lowest level a tracker writes to the ``activity_tracker`` table.
+
+    It is the higher of the tracker's own level and ``ACTIVITY_DB_LOG_LEVEL`` (default ``DEBUG``); OTEL logging is not
+    affected.
+
+    Args:
+        tracker_level: The tracker's own level name.
+
+    Returns:
+        A level name from ``NOTSET`` to ``CRITICAL``.
+
+    Raises:
+        ValueError: If ``ACTIVITY_DB_LOG_LEVEL`` is not one of those names.
+    """
+    configured = (os.environ.get(DB_LOG_LEVEL_SETTING) or DEFAULT_DB_LOG_LEVEL).strip().upper()
+    if configured not in _log_levels:
+        raise ValueError(f"{DB_LOG_LEVEL_SETTING} must be one of {', '.join(_log_levels)}.")
+    tracker = tracker_level.strip().upper()
+    return max(configured, tracker, key=lambda name: _log_levels.get(name, max(_log_levels.values())))
 
 
 class ActivityTracker(BaseRepository):
@@ -22,7 +48,7 @@ class ActivityTracker(BaseRepository):
             "ERROR": False,
             "CRITICAL": False,
         }
-        self._set_log_level(log_level)
+        self._set_log_level(database_log_level(log_level))
 
     def _set_log_level(self, log_level: str) -> None:
         target_level = log_level.upper().strip()
@@ -38,29 +64,7 @@ class ActivityTracker(BaseRepository):
 
     def trace(self, span_name: str) -> Callable[[F], F]:
         """Delegate tracing to the underlying TracedLogger."""
-        return cast(Callable[[F], F], self._logger.trace(span_name))
-
-    def _ensure_table_exists(self) -> None:
-        try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    self._logger.debug("Enabling uuid-ossp extension")
-                    cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
-
-                    self._logger.debug("Creating activity_tracker table if it does not exist")
-                    create_table_query = """
-                                         CREATE TABLE IF NOT EXISTS activity_tracker
-                                         (
-                                             id         UUID PRIMARY KEY   DEFAULT uuid_generate_v4(),
-                                             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             activity   TEXT      NOT NULL
-                                         );"""
-                    cursor.execute(create_table_query)
-                    conn.commit()
-        except psycopg.Error as e:
-            error_message = f"Error creating the work queue table: {str(e)}"
-            self._logger.error(error_message)
-            raise RuntimeError(error_message) from e
+        return self._logger.trace(span_name)
 
     def log_activity(self, activity: str, log_level: str) -> None:
 

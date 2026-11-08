@@ -1,12 +1,29 @@
-FROM python:3.13-slim
+# Build stage: install the locked dependencies into /app/.venv.
+FROM python:3.14-slim AS builder
 
-# uv binary from the official distroless image. Keep the version pinned; for a
-# fully immutable reference, append the image digest for this tag
-# (ghcr.io/astral-sh/uv:0.12.7@sha256:...).
-COPY --from=ghcr.io/astral-sh/uv:0.12.7 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /uvx /bin/
 
-# System packages. psycopg[binary] bundles libpq, so no libpq-dev or build
-# toolchain is required.
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+WORKDIR /app
+
+# Dependencies first, so this layer is reused while only the application code changes.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project --no-dev
+
+COPY . /app
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
+
+# Runtime stage: the virtual environment and the application, without uv or build caches.
+FROM python:3.14-slim
+
+# System packages. psycopg[binary] bundles libpq, so no libpq-dev or build toolchain is required.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
@@ -16,12 +33,12 @@ RUN apt-get update \
        rsync \
     && rm -rf /var/lib/apt/lists/*
 
-# 7-Zip (7zz) pinned for reproducible builds. Do not downgrade below the
-# current 25.01 pin. The checksum is verified; compute it once from the
-# downloaded artifact and keep it next to the version.
-ARG SEVENZIP_SHA256=4ca3b7c6f2f67866b92622818b58233dc70367be2f36b498eb0bdeaaa44b53f4
-RUN curl -L -o /tmp/7z.tar.xz \
-      https://github.com/ip7z/7zip/releases/download/25.01/7z2501-linux-x64.tar.xz \
+# 7-Zip (7zz) pinned for reproducible builds, with the checksum GitHub publishes for the release asset. Do not go
+# below 26.02: earlier releases are open to CVE-2026-14266 (XZ decompression heap overflow, remote code execution),
+# and 7zz picks the handler from the file's content, whatever its name.
+ARG SEVENZIP_SHA256=2b539cf067b2ad48e1baa5093dbaa8818b73542d1222a0ffde9dc5f2922ea62e
+RUN curl -fL -o /tmp/7z.tar.xz \
+      https://github.com/ip7z/7zip/releases/download/26.06/7z2606-linux-x64.tar.xz \
  && echo "${SEVENZIP_SHA256}  /tmp/7z.tar.xz" | sha256sum -c - \
  && tar -xJ -C /tmp -f /tmp/7z.tar.xz \
  && mv /tmp/7zz /usr/local/bin/ \
@@ -30,41 +47,21 @@ RUN curl -L -o /tmp/7z.tar.xz \
  && rm /tmp/7z.tar.xz
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-# Dependency layer: cached until pyproject.toml or uv.lock changes
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-dev --no-install-project
+# Files stay owned by root, and the process only reads them.
+COPY --from=builder /app /app
 
-COPY . .
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
-
-ENV PATH="/app/.venv/bin:$PATH"
-
-# App configuration (override at runtime). Do NOT add MQTT_USERNAME or
-# MQTT_PASSWORD here: NotificationRepository treats a set-but-empty username
-# as real credentials and would authenticate with empty strings.
+# App configuration (override at runtime). Service addresses and credentials are
+# not here: they come from Infisical, reached with the INFISICAL_* bootstrap
+# variables passed at runtime (see readme).
 ENV WATCH_FOLDER="" \
     MOVIES_BASE_FOLDER="" \
     SERIES_BASE_FOLDER="" \
-    POSTGRES_HOST="" \
-    POSTGRES_PORT="5432" \
-    POSTGRES_USER="" \
-    POSTGRES_PASSWORD="" \
-    POSTGRES_DB="" \
-    API_URL="" \
-    MQTT_HOST="" \
-    MQTT_PORT="1883" \
     MQTT_BASE_TOPIC="notifications" \
-    MQTT_CLIENT_ID="" \
-    TELEGRAM_BOT_TOKEN="" \
-    TELEGRAM_CHAT_ID="" \
     TELEGRAM_PARSE_MODE="HTML" \
     TELEGRAM_DISABLE_WEB_PREVIEW="false" \
     TELEGRAM_DISABLE_NOTIFICATION="false" \
@@ -74,6 +71,10 @@ ENV WATCH_FOLDER="" \
 COPY healthcheck.py /usr/local/bin/healthcheck.py
 RUN chmod +x /usr/local/bin/healthcheck.py
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python /usr/local/bin/healthcheck.py || exit 1
+# The service writes its first heartbeat a minute after start, once settings, migrations and the pool are up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python /usr/local/bin/healthcheck.py || exit 1
+
+# The default for a container started without --user. New files in the library belong to whichever user runs it.
+USER 1000:1000
 
 CMD ["python", "main.py"]

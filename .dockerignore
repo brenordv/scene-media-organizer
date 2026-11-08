@@ -1,9 +1,14 @@
-.git
-.idea
-.venv
-.data
-.pytest_cache
-__pycache__
-*.pyc
-.env
-.env.*
+# Allowlist: only what the image needs. Everything else (.env, IDE and agent settings, tests) stays out.
+*
+!main.py
+!on_demand.py
+!healthcheck.py
+!src/
+!migrations/
+!pyproject.toml
+!uv.lock
+!.python-version
+!readme.md
+!LICENSE
+**/__pycache__
+**/*.pyc

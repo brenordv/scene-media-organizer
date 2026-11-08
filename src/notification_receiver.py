@@ -144,7 +144,7 @@ def _compose_notification_message(
 
     is_verified = "✅ VERIFIED" if batch_verified else "❌ FAILED VERIFICATION"
 
-    header = f"<b>🎬 Batch completed {is_verified}</b>" f"\n<b>Batch ID</b>: <code>{html.escape(str(batch_id))}</code>"
+    header = f"<b>🎬 Batch completed {is_verified}</b>\n<b>Batch ID</b>: <code>{html.escape(str(batch_id))}</code>"
 
     high_level = (
         f"\n\n<b>Summary</b>"
@@ -304,6 +304,11 @@ def _handle_notification(topic: str, payload_bytes: bytes) -> None:
 
     for msg in messages:
         send_telegram_message(msg)
+
+
+def is_connected() -> bool:
+    """Whether the notification receiver currently holds a broker connection."""
+    return _notification_agent.is_connected
 
 
 def handle_notification_messages() -> None:

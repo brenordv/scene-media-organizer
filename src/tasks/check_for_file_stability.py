@@ -47,5 +47,5 @@ def check_is_file_stable(filename: str) -> bool:
         return stable_checks == stable_checks_required
 
     except OSError as e:
-        _logger.error(f"Error checking for file stability. " f"Assuming it is not stable. File: {str(e)}")
+        _logger.error(f"Error checking for file stability. Assuming it is not stable. File: {str(e)}")
         return False
