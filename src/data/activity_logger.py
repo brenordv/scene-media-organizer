@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 
 import psycopg
 from opentelemetry import trace
@@ -38,7 +38,7 @@ class ActivityTracker(BaseRepository):
 
     def trace(self, span_name: str) -> Callable[[F], F]:
         """Delegate tracing to the underlying TracedLogger."""
-        return cast(Callable[[F], F], self._logger.trace(span_name))
+        return self._logger.trace(span_name)
 
     def _ensure_table_exists(self) -> None:
         try:

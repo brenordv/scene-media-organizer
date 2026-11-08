@@ -76,5 +76,5 @@ def prepare_file_for_processing(filename: str) -> None:
         media_info_cache_id=None,
     )
     _activity_tracker.info(
-        f"[QUEUE CONSUMER] Added file [{filename}] to queue " f"with status [{status}], and ID [{new_queue_item_id}]"
+        f"[QUEUE CONSUMER] Added file [{filename}] to queue with status [{status}], and ID [{new_queue_item_id}]"
     )

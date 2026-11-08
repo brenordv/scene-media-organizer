@@ -38,9 +38,7 @@ def verify_batch_data(batch_id: Any, batch_data: list[dict[str, Any]]) -> tuple[
         filename = item.get("filename")
 
         if source_file is None or destination_path is None or filename is None:
-            _activity_logger.error(
-                f"[B.ID: {batch_id}] Item [{item.get('id')}] " f"is missing one of the required fields."
-            )
+            _activity_logger.error(f"[B.ID: {batch_id}] Item [{item.get('id')}] is missing one of the required fields.")
             continue
 
         _activity_logger.info(f"[B.ID: {batch_id}] Verifying item [{filename}]...")
@@ -50,14 +48,14 @@ def verify_batch_data(batch_id: Any, batch_data: list[dict[str, Any]]) -> tuple[
 
         if not dst_path.exists():
             _activity_logger.error(
-                f"[B.ID: {batch_id}] Item [{item.get('id')}] " f"destination file does not exist: {dst_path}"
+                f"[B.ID: {batch_id}] Item [{item.get('id')}] destination file does not exist: {dst_path}"
             )
             all_ok = False
             continue
 
         if not src_path.exists():
             _activity_logger.error(
-                f"[B.ID: {batch_id}] Item [{item.get('id')}] " f"source file does not exist: {source_file}"
+                f"[B.ID: {batch_id}] Item [{item.get('id')}] source file does not exist: {source_file}"
             )
             all_ok = False
             continue
@@ -80,8 +78,7 @@ def verify_batch_data(batch_id: Any, batch_data: list[dict[str, Any]]) -> tuple[
             dst_hash = _sha256(dst_path)
         except Exception as exc:
             _activity_logger.error(
-                f"[B.ID: {batch_id}] Item [{item.get('id')}] "
-                f"error computing hashes: {exc} ({src_path} -> {dst_path})"
+                f"[B.ID: {batch_id}] Item [{item.get('id')}] error computing hashes: {exc} ({src_path} -> {dst_path})"
             )
             all_ok = False
             continue
@@ -95,9 +92,7 @@ def verify_batch_data(batch_id: Any, batch_data: list[dict[str, Any]]) -> tuple[
             verification_result[filename] = {"size": True, "hash": False}
             continue
 
-        _activity_logger.debug(
-            f"[B.ID: {batch_id}] Item [{item.get('id')}] " f"verified successfully ({src_path.name})"
-        )
+        _activity_logger.debug(f"[B.ID: {batch_id}] Item [{item.get('id')}] verified successfully ({src_path.name})")
 
         verification_result[filename] = {"size": True, "hash": True}
 

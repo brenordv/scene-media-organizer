@@ -204,6 +204,14 @@ def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
 
     title_as_filename = sanitize_string_for_filename(title)
 
+    if not title_as_filename:
+        _activity_tracker.error(
+            f"{tag} Title [{title}] has no character usable in a folder name. Media Info cache id: {media_info_id}"
+        )
+        item["status"] = "FAILED_ID"
+        _work_queue_manager.update(item)
+        return None
+
     if media_type == "movie":
         assert _movies_base_folder is not None  # guaranteed by the module-level guard above
         movies_base_path = Path(_movies_base_folder)

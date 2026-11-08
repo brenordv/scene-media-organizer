@@ -6,7 +6,7 @@ def sanitize_string_for_filename(input_str: str) -> str:
         input_str: The input string to sanitize
 
     Returns:
-        A sanitized string safe for use as a filename
+        A sanitized string safe for use as a filename, or an empty string when no usable character remains.
     """
     result = []
 
@@ -37,6 +37,4 @@ def sanitize_string_for_filename(input_str: str) -> str:
     sanitized = sanitized.strip("_")
 
     # Capitalize the first letter (must be the last thing)
-    sanitized = sanitized[0].upper() + sanitized[1:]
-
-    return sanitized
+    return sanitized[:1].upper() + sanitized[1:]

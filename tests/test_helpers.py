@@ -3,27 +3,27 @@ from datetime import datetime
 from src.helpers import parse_work_item_row, partition_open_batches, select_new_files
 
 
-def test_select_new_files_partial_overlap():
+def test_select_new_files_partial_overlap() -> None:
     files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
     assert select_new_files(files_found, ["x.mkv"]) == ["/a/y.mkv"]
 
 
-def test_select_new_files_no_overlap():
+def test_select_new_files_no_overlap() -> None:
     files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
     assert select_new_files(files_found, []) == ["/a/x.mkv", "/a/y.mkv"]
 
 
-def test_select_new_files_all_existing():
+def test_select_new_files_all_existing() -> None:
     files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
     assert select_new_files(files_found, ["x.mkv", "y.mkv"]) == []
 
 
-def test_select_new_files_empty_inputs():
+def test_select_new_files_empty_inputs() -> None:
     assert select_new_files([], []) == []
     assert select_new_files([], ["x.mkv"]) == []
 
 
-def test_parse_work_item_row_maps_twelve_columns_including_attempts():
+def test_parse_work_item_row_maps_twelve_columns_including_attempts() -> None:
     row = (
         "id-1",
         "/a/x.mkv",
@@ -54,18 +54,18 @@ def test_parse_work_item_row_maps_twelve_columns_including_attempts():
     }
 
 
-def test_partition_open_batches_empty_input():
+def test_partition_open_batches_empty_input() -> None:
     assert partition_open_batches([]) == (None, [])
 
 
-def test_partition_open_batches_single_batch():
+def test_partition_open_batches_single_batch() -> None:
     row = ("batch-1", datetime(2026, 1, 1, 10, 0, 0), datetime(2026, 1, 1, 10, 5, 0), 3)
     resume_row, stale_batch_ids = partition_open_batches([row])
     assert resume_row == row
     assert stale_batch_ids == []
 
 
-def test_partition_open_batches_most_recent_wins():
+def test_partition_open_batches_most_recent_wins() -> None:
     older = ("batch-old", datetime(2026, 1, 1, 9, 0, 0), datetime(2026, 1, 1, 9, 30, 0), 2)
     newer = ("batch-new", datetime(2026, 1, 1, 12, 0, 0), datetime(2026, 1, 1, 12, 1, 0), 5)
     resume_row, stale_batch_ids = partition_open_batches([older, newer])
@@ -73,7 +73,7 @@ def test_partition_open_batches_most_recent_wins():
     assert stale_batch_ids == ["batch-old"]
 
 
-def test_partition_open_batches_tie_broken_by_batch_id():
+def test_partition_open_batches_tie_broken_by_batch_id() -> None:
     created = datetime(2026, 1, 1, 10, 0, 0)
     row_a = ("batch-aaa", created, created, 1)
     row_b = ("batch-bbb", created, created, 1)

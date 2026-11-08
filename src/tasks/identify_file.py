@@ -52,5 +52,5 @@ def identify_file(full_path: str) -> Any:
         _logger.debug(f"Identify request successful for: {full_path}")
         return response.json()
 
-    _logger.error(f"Identify request failed ({response.status_code}) for [{full_path}] " f"with error: {response.text}")
+    _logger.error(f"Identify request failed ({response.status_code}) for [{full_path}] with error: {response.text}")
     return None

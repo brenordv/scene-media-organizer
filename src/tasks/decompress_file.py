@@ -11,7 +11,7 @@ from typing import Any
 
 from opentelemetry import trace
 
-from src.utils import get_otel_log_handler
+from src.utils import child_process_env, get_otel_log_handler
 
 _unrar_path = os.environ.get("UNRAR_PATH", "7zz")
 _logger = get_otel_log_handler("Decompress File", unique_handler_types=True)
@@ -55,7 +55,9 @@ def decompress_file(file_path: str) -> bool:
         elif suffix == ".rar":
             _logger.debug("Trying to decompress a rar archive...")
             try:
-                subprocess.run([_unrar_path, "x", "-y", str(path), f"-o{str(extract_dir)}"], check=True)
+                subprocess.run(
+                    [_unrar_path, "x", "-y", str(path), f"-o{str(extract_dir)}"], check=True, env=child_process_env()
+                )
                 return True
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 _logger.error(f"Error decompressing rar archive: {str(e)}")
