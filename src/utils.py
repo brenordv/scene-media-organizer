@@ -65,6 +65,36 @@ def child_process_env() -> dict[str, str]:
     return {name: os.environ[name] for name in CHILD_PROCESS_ENV_VARIABLES if name in os.environ}
 
 
+def parse_base_url(value: str, setting: str, *, https_only: bool = False) -> str:
+    """Validate a service base URL and return it trimmed, without a trailing slash.
+
+    Args:
+        value: The configured URL.
+        setting: The setting's name, used in the error message (the value itself is never quoted).
+        https_only: Reject plain http.
+
+    Returns:
+        The base URL.
+
+    Raises:
+        ValueError: If the URL has no http(s) scheme or host (https only when required), or carries credentials, a
+            query or a fragment.
+    """
+    base_url = value.strip().rstrip("/")
+    parts = urlsplit(base_url)
+    allowed_schemes = {"https"} if https_only else {"http", "https"}
+    if (
+        parts.scheme not in allowed_schemes
+        or not parts.hostname
+        or "@" in parts.netloc
+        or parts.query
+        or parts.fragment
+    ):
+        scheme = "an https" if https_only else "an http(s)"
+        raise ValueError(f"{setting} must be {scheme} URL with a host and no credentials, query or fragment.")
+    return base_url
+
+
 def get_telegram_api_base() -> str:
     """Return the Telegram Bot API base URL: ``TELEGRAM_API_BASE``, or the public API when unset.
 
@@ -77,11 +107,9 @@ def get_telegram_api_base() -> str:
         ValueError: If ``TELEGRAM_API_BASE`` is not an https URL with a host, or carries credentials, a query or a
             fragment.
     """
-    api_base = (get_env("TELEGRAM_API_BASE") or TELEGRAM_DEFAULT_API_BASE).rstrip("/")
-    parts = urlsplit(api_base)
-    if parts.scheme != "https" or not parts.hostname or "@" in parts.netloc or parts.query or parts.fragment:
-        raise ValueError("TELEGRAM_API_BASE must be an https URL with a host and no credentials, query or fragment.")
-    return api_base
+    return parse_base_url(
+        get_env("TELEGRAM_API_BASE") or TELEGRAM_DEFAULT_API_BASE, "TELEGRAM_API_BASE", https_only=True
+    )
 
 
 def telegram_excluded_urls(api_base: str) -> str:

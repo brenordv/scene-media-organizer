@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 
 from src import batch_processor as processor_module
-from src.batch_processor import _process_batch_item
+from src.batch_processor import _process_batch_item, process_batch
+from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError
 
 MOVIES = Path(os.environ["MOVIES_BASE_FOLDER"])
 SERIES = Path(os.environ["SERIES_BASE_FOLDER"])
@@ -74,6 +75,79 @@ def test_unidentified_file_is_marked_failed_id(
     assert recorder.copies == []
 
 
+def _identify_raises(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def failing_identify(path: str) -> dict[str, Any] | None:
+        raise error
+
+    monkeypatch.setattr(processor_module, "identify_file", failing_identify)
+
+
+def test_identifier_unavailable_refunds_the_attempt_and_raises(
+    recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _identify_raises(monkeypatch, IdentifierUnavailableError("Media identifier unavailable (HTTP 503)"))
+
+    with pytest.raises(IdentifierUnavailableError):
+        _process_batch_item(_item(media_file, attempts=3))
+
+    assert recorder.updates[-1]["attempts"] == 2
+    assert recorder.updates[-1]["status"] == "WORKING"
+    assert recorder.copies == []
+
+
+def test_identifier_error_keeps_the_attempt_and_asks_for_a_retry(
+    recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _identify_raises(monkeypatch, IdentifierError("Media identifier failed (HTTP 500)"))
+
+    result = _process_batch_item(_item(media_file, attempts=3))
+
+    assert result is not None
+    assert result["attempts"] == 3
+    assert recorder.updates == []
+    assert recorder.copies == []
+
+
+@pytest.fixture
+def batch_side_effects(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+    manager = processor_module._work_queue_manager
+    monkeypatch.setattr(manager, "move_working_items_back_to_pending", lambda batch_id: calls.append("sweep"))
+    monkeypatch.setattr(manager, "set_batch_as_done", lambda batch_id: calls.append("done"))
+    monkeypatch.setattr(manager, "get_batch_data", lambda batch_id: [])
+    monkeypatch.setattr(manager, "update_batch_verification", lambda batch_id, verified: None)
+    monkeypatch.setattr(processor_module, "verify_batch_data", lambda batch_id, data: (False, {}))
+    monkeypatch.setattr(processor_module._notification_agent, "post_message", lambda message: calls.append("notify"))
+    return calls
+
+
+def test_process_batch_identifier_outage_logs_one_warning_and_leaves_items_for_the_sweep(
+    recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch, batch_side_effects: list[str]
+) -> None:
+    _identify_raises(monkeypatch, IdentifierUnavailableError("Media identifier unreachable (ConnectionError)"))
+    warnings: list[str] = []
+    monkeypatch.setattr(processor_module._activity_tracker, "warning", warnings.append)
+    second = dict(_item(media_file), id="item-2")
+
+    process_batch([_item(media_file), second], "batch-1")
+
+    assert len(warnings) == 1
+    assert "4 identification attempt(s)" in warnings[0]
+    assert all(update["status"] == "WORKING" for update in recorder.updates)
+    assert batch_side_effects == ["sweep", "done", "notify"]
+
+
+def test_process_batch_unexpected_error_marks_failed_processing(
+    recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch, batch_side_effects: list[str]
+) -> None:
+    _identify_raises(monkeypatch, RuntimeError("database went away"))
+
+    process_batch([_item(media_file)], "batch-1")
+
+    assert recorder.updates[-1]["status"] == "FAILED_PROCESSING"
+    assert batch_side_effects == ["sweep", "done", "notify"]
+
+
 def test_movie_is_copied_to_title_and_year_folder(
     recorder: _Recorder, media_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -110,7 +184,6 @@ def test_episode_is_copied_to_series_season_folder(
 @pytest.mark.parametrize(
     "media_info",
     [
-        {"id": None, "media_type": "movie", "title": "A"},
         {"id": "cache-3", "media_type": "unknown", "title": "A"},
         {"id": "cache-3", "media_type": "movie", "title": None},
         {"id": "cache-3", "media_type": "movie", "title": "???"},

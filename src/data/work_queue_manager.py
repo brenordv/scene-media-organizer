@@ -202,7 +202,7 @@ class WorkQueueManager(BaseRepository):
 
             if capped_rows:
                 capped_filenames = [row[0] for row in capped_rows]
-                _activity_tracker.warning(
+                _activity_tracker.error(
                     f"{len(capped_filenames)} interrupted item(s) reached the attempt "
                     f"cap ({_MAX_ATTEMPTS}) and were marked FAILED_MAX_ATTEMPTS: "
                     f"{capped_filenames[:20]}"
@@ -491,7 +491,7 @@ class WorkQueueManager(BaseRepository):
 
             if capped_rows:
                 capped_filenames = [row[0] for row in capped_rows]
-                _activity_tracker.warning(
+                _activity_tracker.error(
                     f"[Batch ID: {batch_id}] {len(capped_filenames)} item(s) reached the attempt "
                     f"cap ({_MAX_ATTEMPTS}) and were marked FAILED_MAX_ATTEMPTS: {capped_filenames}"
                 )

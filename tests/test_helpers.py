@@ -1,6 +1,53 @@
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from src.helpers import parse_work_item_row, partition_open_batches, select_new_files
+import pytest
+
+from src.helpers import (
+    Destination,
+    parse_work_item_row,
+    partition_open_batches,
+    resolve_destination,
+    select_new_files,
+)
+
+MOVIES = Path("/movies")
+SERIES = Path("/series")
+
+
+@pytest.mark.parametrize(
+    ("media_info", "expected"),
+    [
+        ({"media_type": "movie", "title": "The Matrix", "year": 1999}, MOVIES / "The-Matrix--1999"),
+        ({"media_type": "movie", "title": "The Matrix", "year": None}, MOVIES / "The-Matrix"),
+        (
+            {"media_type": "tv", "title": "Slow Horses", "season": 6, "tmdb_series_id": 1},
+            SERIES / "Slow-Horses/Season06",
+        ),
+        ({"media_type": "tv", "title": "Doctor Who", "season": 0}, SERIES / "Doctor-Who/Season00"),
+    ],
+)
+def test_resolve_destination_places_movies_and_episodes(media_info: dict[str, Any], expected: Path) -> None:
+    assert resolve_destination(media_info, MOVIES, SERIES) == Destination(expected)
+
+
+@pytest.mark.parametrize(
+    ("media_info", "reason_fragment"),
+    [
+        ({"media_type": "unknown", "title": "A"}, "media type"),
+        ({"media_type": None, "title": "A"}, "media type"),
+        ({"media_type": "movie", "title": None}, "no title"),
+        ({"media_type": "movie", "title": "???"}, "no character usable"),
+        ({"media_type": "tv", "title": "Show", "season": None}, "no season"),
+    ],
+)
+def test_resolve_destination_unusable_record_gives_a_reason(media_info: dict[str, Any], reason_fragment: str) -> None:
+    destination = resolve_destination(media_info, MOVIES, SERIES)
+
+    assert destination.path is None
+    assert destination.reason is not None
+    assert reason_fragment in destination.reason
 
 
 def test_select_new_files_partial_overlap() -> None:

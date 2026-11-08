@@ -3,17 +3,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-import requests
 from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
 from src.data.notification_repository import NotificationRepository
 from src.data.work_queue_manager import WorkQueueManager
+from src.helpers import resolve_destination
 from src.tasks.check_for_file_stability import check_is_file_stable
 from src.tasks.copy_file import copy_file
 from src.tasks.decompress_file import decompress_file
-from src.tasks.identify_file import identify_file
-from src.tasks.sanitize_string_for_filename import sanitize_string_for_filename
+from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError, identify_file
 from src.tasks.verify_batch_data import verify_batch_data
 from src.utils import release_idle_memory
 
@@ -25,6 +24,9 @@ _notification_agent = NotificationRepository(client_id="smo-watchdog-notificatio
 
 if _series_base_folder is None or _movies_base_folder is None:
     raise RuntimeError("MOVIES_BASE_FOLDER and SERIES_BASE_FOLDER must be set")
+
+_movies_base_path = Path(_movies_base_folder)
+_series_base_path = Path(_series_base_folder)
 
 
 def batch_processor() -> None:
@@ -65,6 +67,7 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
 
     tag = f"[B.ID: {current_batch_id}]"
     try_again = []
+    unavailable_count = 0
 
     # First try.
     for item in batch:
@@ -73,6 +76,9 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
             if file_to_retry is not None:
                 try_again.append(file_to_retry)
                 continue
+        except IdentifierUnavailableError:
+            unavailable_count += 1
+            try_again.append(item)
         except Exception as e:
             _activity_tracker.error(f"{tag} Error processing item [{item['id']}]: {str(e)}")
             item["status"] = "FAILED_PROCESSING"
@@ -81,14 +87,24 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
     if len(try_again) > 0:
         _activity_tracker.debug(f"{tag} Retrying to process {len(try_again)} items...")
 
-    # Retry.
+    # Retry. Items still waiting on the identifier stay WORKING and the sweep below returns them to PENDING.
     for item in try_again:
         try:
             _process_batch_item(item)
+        except IdentifierUnavailableError:
+            unavailable_count += 1
         except Exception as e:
             _activity_tracker.error(f"{tag} Error retrying to process item [{item['id']}]: {str(e)}")
             item["status"] = "FAILED_PROCESSING_RETRY"
             _work_queue_manager.update(item)
+
+    if unavailable_count:
+        _activity_tracker.warning(
+            f"{tag} Media identifier unavailable for {unavailable_count} identification attempt(s); "
+            "the items stay queued and will be retried in a later batch."
+        )
+    if span.is_recording():
+        span.set_attribute("batch.identifier_unavailable", unavailable_count)
 
     _activity_tracker.debug(
         f"{tag} In case any 'WORKING' items slipped through, we're going to move them "
@@ -115,6 +131,18 @@ def process_batch(batch: list[dict[str, Any]], current_batch_id: Any) -> None:
 
 @_activity_tracker.trace("_process_batch_item")
 def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Process one work item: wait for the file to settle, identify it, then decompress or copy it.
+
+    Args:
+        item: The work item; its status, attempts, target path and media id are updated in the queue.
+
+    Returns:
+        The item when it should be retried later in this batch, otherwise None.
+
+    Raises:
+        IdentifierUnavailableError: If the media identifier is unavailable; the item's attempt has been refunded and
+            saved, and the caller decides when to retry.
+    """
     span = trace.get_current_span()
     item_id = item["id"]
     full_path = item["full_path"]
@@ -147,15 +175,17 @@ def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
 
     try:
         media_info = identify_file(full_path)
-    except requests.exceptions.RequestException as e:
-        _activity_tracker.warning(
-            f"{tag} Identify service unreachable ({str(e)}). Will retry the item in a later batch."
-        )
+    except IdentifierUnavailableError as e:
+        _activity_tracker.debug(f"{tag} {e}. The attempt is refunded; the item will be retried later.")
         item["attempts"] = max(0, item["attempts"] - 1)
         _work_queue_manager.update(item)
+        raise
+    except IdentifierError as e:
+        _activity_tracker.warning(f"{tag} {e}. This counts as a failed attempt ({item['attempts']}).")
         return item
 
     if media_info is None:
+        _activity_tracker.info(f"{tag} The media identifier found no movie or episode in [{full_path_obj.name}].")
         item["status"] = "FAILED_ID"
         _work_queue_manager.update(item)
         return None
@@ -169,75 +199,20 @@ def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
         _work_queue_manager.update(item)
         return None
 
-    media_info_id = media_info.get("id")
-
-    if media_info_id is None:
-        _activity_tracker.error(
-            f"{tag} File has no media info id. No way to proceed with it. Media Info cache id: {media_info_id}"
-        )
-        item["status"] = "FAILED_ID"
-        _work_queue_manager.update(item)
-        return None
-
+    media_info_id = media_info["id"]
     item["media_info_cache_id"] = media_info_id
     _work_queue_manager.update(item)
 
-    media_type = media_info.get("media_type")
-
-    if media_type is None or media_type not in ["movie", "tv"]:
+    destination = resolve_destination(media_info, _movies_base_path, _series_base_path)
+    if destination.path is None:
         _activity_tracker.error(
-            f"{tag} File has no media type. No way to proceed with it. Media Info cache id: {media_info_id}"
+            f"{tag} Cannot place the file: {destination.reason}. Media Info cache id: {media_info_id}"
         )
         item["status"] = "FAILED_ID"
         _work_queue_manager.update(item)
         return None
 
-    title = media_info.get("title")
-
-    if title is None:
-        _activity_tracker.error(
-            f"{tag} File has no title. No way to proceed with it. Media Info cache id: {media_info_id}"
-        )
-        item["status"] = "FAILED_ID"
-        _work_queue_manager.update(item)
-        return None
-
-    title_as_filename = sanitize_string_for_filename(title)
-
-    if not title_as_filename:
-        _activity_tracker.error(
-            f"{tag} Title [{title}] has no character usable in a folder name. Media Info cache id: {media_info_id}"
-        )
-        item["status"] = "FAILED_ID"
-        _work_queue_manager.update(item)
-        return None
-
-    if media_type == "movie":
-        assert _movies_base_folder is not None  # guaranteed by the module-level guard above
-        movies_base_path = Path(_movies_base_folder)
-        year = media_info.get("year")
-
-        destination_path = (
-            movies_base_path.joinpath(f"{title_as_filename}--{year}")
-            if year is not None
-            else movies_base_path.joinpath(title_as_filename)
-        )
-
-    else:
-        assert _series_base_folder is not None  # guaranteed by the module-level guard above
-        series_base_path = Path(_series_base_folder)
-        season_number = media_info.get("season")
-
-        if season_number is None:
-            _activity_tracker.error(
-                f"{tag} File has no season number. No way to proceed with it. Media Info cache id: {media_info_id}"
-            )
-            item["status"] = "FAILED_ID"
-            _work_queue_manager.update(item)
-            return None
-
-        destination_path = series_base_path.joinpath(title_as_filename).joinpath(f"Season{season_number:02d}")
-
+    destination_path = destination.path
     destination_path.mkdir(parents=True, exist_ok=True)
 
     item["target_path"] = str(destination_path.absolute())
