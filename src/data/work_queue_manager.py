@@ -19,52 +19,6 @@ class WorkQueueManager(BaseRepository):
     def __init__(self) -> None:
         super().__init__("Work Queue Manager")
 
-    def _ensure_table_exists(self) -> None:
-        try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    _activity_tracker.debug("Enabling uuid-ossp extension")
-                    cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
-
-                    _activity_tracker.debug("Creating work_queue table if it does not exist")
-                    create_table_query = """
-                                         CREATE TABLE IF NOT EXISTS work_queue (
-                                             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-                                             full_path TEXT NOT NULL,
-                                             filename TEXT NOT NULL,
-                                             parent TEXT NOT NULL,
-                                             target_path TEXT NULL,
-                                             status TEXT NOT NULL,
-                                             is_archive BOOLEAN NOT NULL DEFAULT FALSE,
-                                             is_main_archive_file BOOLEAN NOT NULL DEFAULT FALSE,
-                                             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             media_info_cache_id UUID NULL);"""
-                    cursor.execute(create_table_query)
-
-                    _activity_tracker.debug("Creating batch_control table if it does not exist")
-                    create_table_query = """
-                                         CREATE TABLE IF NOT EXISTS batch_control (
-                                             batch_id UUID NOT NULL,
-                                             work_queue_id UUID NOT NULL,
-                                             in_progress BOOLEAN NOT NULL DEFAULT FALSE,
-                                             verified BOOLEAN NOT NULL DEFAULT FALSE,
-                                             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             modified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                         );"""
-                    cursor.execute(create_table_query)
-
-                    _activity_tracker.debug("Ensuring work_queue.attempts column exists")
-                    cursor.execute(
-                        "ALTER TABLE work_queue ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;"
-                    )
-
-                    conn.commit()
-        except psycopg.Error as e:
-            error_message = f"Error creating the work queue table: {str(e)}"
-            _activity_tracker.error(error_message)
-            raise RuntimeError(error_message) from e
-
     @_activity_tracker.trace("WorkQueueManager.recover_stale_batches")
     def recover_stale_batches(self) -> None:
         """Called once at processor startup. Any in-progress batch at that moment

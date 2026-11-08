@@ -99,3 +99,19 @@ def test_format_report_lists_every_finding() -> None:
     assert "Not identified any more: 1" in text
     assert "a.mkv: no longer identified" in text
     assert "Stopped early" in text
+
+
+def test_format_report_lists_changes_and_failures() -> None:
+    identify = _Identifier(
+        {
+            "flesh.tx.mkv": {"id": "2", "media_type": "tv", "title": "Slow Horses", "season": 6},
+            "broken.mkv": IdentifierError("Media identifier failed (HTTP 500)"),
+        }
+    )
+    items = [_item("flesh.tx.mkv", "/movies/Flesh-TX--2023"), _item("broken.mkv", "/movies/Broken")]
+
+    text = format_report(recheck_filed_items(items, identify, MOVIES, SERIES))
+
+    assert "  flesh.tx.mkv: Flesh-TX--2023 -> Slow-Horses/Season06" in text
+    assert "  broken.mkv: identification failed" in text
+    assert "Stopped early" not in text

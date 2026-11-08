@@ -4,6 +4,7 @@
 !on_demand.py
 !healthcheck.py
 !src/
+!migrations/
 !pyproject.toml
 !uv.lock
 !.python-version

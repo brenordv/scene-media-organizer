@@ -1,0 +1,65 @@
+from typing import Any
+
+import psycopg
+import pytest
+
+from src import startup as startup_module
+from src.data.migrations import MigrationError
+from src.settings import MQTT_HOST_SECRET
+from src.startup import prepare_services
+from tests.fakes import RecordingLogger, as_traced
+
+
+@pytest.fixture
+def migrations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    calls: list[str] = []
+
+    def fake_apply(conninfo: str, logger: Any) -> list[Any]:
+        calls.append(conninfo)
+        return []
+
+    monkeypatch.setattr(startup_module, "apply_migrations", fake_apply)
+    return calls
+
+
+def test_prepare_services_reads_settings_then_migrates(migrations: list[str]) -> None:
+    prepare_services(as_traced(RecordingLogger()))
+
+    assert migrations == ["postgresql://media_organizer:test-password@db.test:5432/smo_watchdog"]
+
+
+def test_prepare_services_missing_setting_exits_2_before_migrating(
+    secret_values: dict[str, str], migrations: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    del secret_values[MQTT_HOST_SECRET]
+    logger = RecordingLogger()
+
+    with pytest.raises(SystemExit) as exc:
+        prepare_services(as_traced(logger))
+
+    assert exc.value.code == 2
+    assert migrations == []
+    assert MQTT_HOST_SECRET in capsys.readouterr().err
+    assert logger.lines[-1][0] == "error"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [MigrationError("Migration 0002_x failed and was rolled back: boom"), psycopg.OperationalError("refused")],
+)
+def test_prepare_services_migration_failure_exits_1(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception
+) -> None:
+    def failing_apply(conninfo: str, logger: Any) -> list[Any]:
+        raise error
+
+    monkeypatch.setattr(startup_module, "apply_migrations", failing_apply)
+    logger = RecordingLogger()
+
+    with pytest.raises(SystemExit) as exc:
+        prepare_services(as_traced(logger))
+
+    assert exc.value.code == 1
+    assert capsys.readouterr().err.startswith("Migration failed:")
+    assert logger.lines[-1][0] == "error"
+    assert "test-password" not in logger.lines[-1][1]

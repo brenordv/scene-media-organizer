@@ -66,28 +66,6 @@ class ActivityTracker(BaseRepository):
         """Delegate tracing to the underlying TracedLogger."""
         return self._logger.trace(span_name)
 
-    def _ensure_table_exists(self) -> None:
-        try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    self._logger.debug("Enabling uuid-ossp extension")
-                    cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
-
-                    self._logger.debug("Creating activity_tracker table if it does not exist")
-                    create_table_query = """
-                                         CREATE TABLE IF NOT EXISTS activity_tracker
-                                         (
-                                             id         UUID PRIMARY KEY   DEFAULT uuid_generate_v4(),
-                                             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                                             activity   TEXT      NOT NULL
-                                         );"""
-                    cursor.execute(create_table_query)
-                    conn.commit()
-        except psycopg.Error as e:
-            error_message = f"Error creating the work queue table: {str(e)}"
-            self._logger.error(error_message)
-            raise RuntimeError(error_message) from e
-
     def log_activity(self, activity: str, log_level: str) -> None:
 
         if not self._log_control[log_level]:

@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from src.config import USAGE_ERROR_EXIT_CODE, add_config_arguments, apply_config, parse_command_line, require_env
+from src.config import add_config_arguments, apply_config, parse_command_line, require_env
 
 STOPPED_EARLY_EXIT_CODE = 1
 
@@ -29,19 +29,11 @@ apply_config(_args)
 require_env("WATCH_FOLDER", "MOVIES_BASE_FOLDER", "SERIES_BASE_FOLDER", "OTEL_EXPORTER_OTLP_ENDPOINT")
 
 # Startup logs through the OTEL-only TracedLogger: ActivityTracker writes to a
-# database that is not reachable yet.
-from src.secret_store import SecretsError
-from src.settings import load_settings
+# database that is not reachable, or not migrated, yet.
+from src.startup import prepare_services
 from src.utils import flush_all_otel_loggers, get_otel_log_handler
 
-_startup_logger = get_otel_log_handler("On Demand Startup", unique_handler_types=True)
-
-try:
-    load_settings(_startup_logger)
-except (SecretsError, ValueError) as settings_error:
-    print(f"Settings error: {settings_error}", file=sys.stderr)
-    flush_all_otel_loggers()
-    sys.exit(USAGE_ERROR_EXIT_CODE)
+prepare_services(get_otel_log_handler("On Demand Startup", unique_handler_types=True))
 
 from src.data.db import init_pool, shutdown_pool
 

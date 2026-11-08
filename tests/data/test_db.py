@@ -1,8 +1,10 @@
+from typing import Any
+
 import psycopg
 import pytest
 
 from src.data import db as db_module
-from src.data.db import POSTGRES_CONNECTION_STRING_SECRET, build_conninfo, probe_database
+from src.data.db import POSTGRES_CONNECTION_STRING_SECRET, build_conninfo, init_pool, probe_database
 from src.secret_store import SecretsError
 from tests.fakes import FakeDatabase
 
@@ -46,6 +48,31 @@ def test_build_conninfo_missing_secret_raises(secret_values: dict[str, str]) -> 
 
     with pytest.raises(SecretsError, match=POSTGRES_CONNECTION_STRING_SECRET):
         build_conninfo()
+
+
+def test_init_pool_creates_the_pool_and_probes_it(monkeypatch: pytest.MonkeyPatch, fake_db: FakeDatabase) -> None:
+    configs: list[Any] = []
+    monkeypatch.setattr(db_module, "create_pool", configs.append)
+
+    init_pool()
+
+    assert configs[0].conn_info == "postgresql://media_organizer:test-password@db.test:5432/smo_watchdog"
+    assert fake_db.queries() == ["SELECT 1"]
+
+
+def test_init_pool_probe_failure_closes_the_pool_and_retries(
+    monkeypatch: pytest.MonkeyPatch, fake_db: FakeDatabase
+) -> None:
+    closed: list[bool] = []
+    monkeypatch.setattr(db_module, "create_pool", lambda config: None)
+    monkeypatch.setattr(db_module, "close_pool", lambda: closed.append(True))
+    monkeypatch.setattr("raccoontools.decorators.retry.sleep", lambda seconds: None)
+    fake_db.fail_with = psycopg.OperationalError("the database system is starting up")
+
+    init_pool()
+
+    assert closed == [True]
+    assert fake_db.queries() == ["SELECT 1", "SELECT 1"]
 
 
 def test_probe_database_runs_select_one(fake_db: FakeDatabase) -> None:

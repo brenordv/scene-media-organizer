@@ -86,6 +86,10 @@ def test_split_messages_long_message_respects_the_limit() -> None:
         assert "".join(chunks).replace("\n", "") == message.replace("\n", "")
 
 
+def test_is_connected_reports_the_receiver_connection() -> None:
+    assert receiver_module.is_connected() is False
+
+
 def test_handle_notification_sends_the_composed_report(monkeypatch: pytest.MonkeyPatch) -> None:
     sent: list[str] = []
 
