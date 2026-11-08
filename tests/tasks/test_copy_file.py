@@ -5,7 +5,8 @@ from typing import Any
 
 import pytest
 
-from src.tasks.copy_file import copy_file
+from src.tasks import copy_file as copy_file_module
+from src.tasks.copy_file import CopyPermissionError, copy_file
 
 
 @pytest.fixture(autouse=True)
@@ -57,9 +58,56 @@ def test_copy_file_every_attempt_fails_returns_false(tmp_path: Path, monkeypatch
     assert not (tmp_path / "library" / "movie.mkv").exists()
 
 
+def test_copy_file_permission_error_raises_without_retrying(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    attempts: list[str] = []
+    sleeps: list[float] = []
+
+    def denied_copy(src: str, dst: Path) -> None:
+        attempts.append(src)
+        raise PermissionError(13, "Permission denied", src)
+
+    monkeypatch.setattr("shutil.copy", denied_copy)
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    with pytest.raises(CopyPermissionError, match="Permission denied"):
+        copy_file(str(source), tmp_path / "library")
+
+    assert len(attempts) == 1
+    assert sleeps == []
+
+
+def test_copy_file_unwritable_destination_folder_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+
+    def denied_mkdir(self: Path, parents: bool = False, exist_ok: bool = False) -> None:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", denied_mkdir)
+
+    with pytest.raises(CopyPermissionError):
+        copy_file(str(source), tmp_path / "library")
+
+
+def test_copy_file_denied_ownership_change_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    monkeypatch.setenv("WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY", "true")
+
+    def denied_chown(dst_file: Path, src_file: str) -> None:
+        raise PermissionError(1, "Operation not permitted", str(dst_file))
+
+    monkeypatch.setattr(copy_file_module, "_change_destination_ownership", denied_chown)
+
+    with pytest.raises(CopyPermissionError, match="Operation not permitted"):
+        copy_file(str(source), tmp_path / "library")
+
+
 class _FakeRsync:
-    def __init__(self, exit_code: int) -> None:
-        self.stdout = io.StringIO("sending incremental file list\n")
+    def __init__(self, exit_code: int, output: str = "sending incremental file list\n") -> None:
+        self.stdout = io.StringIO(output)
         self._exit_code = exit_code
 
     def __enter__(self) -> _FakeRsync:
@@ -100,3 +148,24 @@ def test_copy_file_rsync_failure_returns_false(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr("subprocess.Popen", lambda command, **kwargs: _FakeRsync(23))
 
     assert copy_file(str(source), tmp_path / "library") is False
+
+
+def test_copy_file_rsync_permission_denied_raises_without_retrying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    monkeypatch.setenv("WATCHDOG_COPY_USING_RSYNC", "true")
+    denied_line = 'rsync: [sender] send_files failed to open "movie.mkv": Permission denied (13)\n'
+    calls: list[list[str]] = []
+
+    def fake_popen(command: list[str], **kwargs: Any) -> _FakeRsync:
+        calls.append(command)
+        return _FakeRsync(23, denied_line)
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    with pytest.raises(CopyPermissionError, match="Permission denied"):
+        copy_file(str(source), tmp_path / "library")
+
+    assert len(calls) == 1

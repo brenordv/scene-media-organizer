@@ -52,7 +52,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Files stay owned by root. The process also runs as root, because WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY calls chown.
+# Files stay owned by root, and the process only reads them.
 COPY --from=builder /app /app
 
 # App configuration (override at runtime). Service addresses and credentials are
@@ -73,5 +73,8 @@ RUN chmod +x /usr/local/bin/healthcheck.py
 
 # The service writes its first heartbeat a minute after start, once settings, migrations and the pool are up.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python /usr/local/bin/healthcheck.py || exit 1
+
+# The default for a container started without --user. New files in the library belong to whichever user runs it.
+USER 1000:1000
 
 CMD ["python", "main.py"]

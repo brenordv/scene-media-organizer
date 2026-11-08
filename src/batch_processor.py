@@ -1,3 +1,4 @@
+import html
 import os
 import time
 from pathlib import Path
@@ -10,9 +11,10 @@ from src.data.notification_repository import NotificationRepository
 from src.data.work_queue_manager import WorkQueueManager
 from src.helpers import resolve_destination
 from src.tasks.check_for_file_stability import check_is_file_stable
-from src.tasks.copy_file import copy_file
+from src.tasks.copy_file import CopyPermissionError, copy_file
 from src.tasks.decompress_file import decompress_file
 from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError, identify_file
+from src.tasks.send_telegram_message import send_telegram_message
 from src.tasks.verify_batch_data import verify_batch_data
 from src.utils import release_idle_memory
 
@@ -214,12 +216,15 @@ def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     destination_path = destination.path
-    destination_path.mkdir(parents=True, exist_ok=True)
 
     item["target_path"] = str(destination_path.absolute())
     _work_queue_manager.update(item)
 
-    copy_result = copy_file(full_path, destination_path)
+    try:
+        copy_result = copy_file(full_path, destination_path)
+    except CopyPermissionError as e:
+        _report_permission_failure(item, destination_path, e)
+        return None
 
     if copy_result:
         item["status"] = "DONE"
@@ -230,3 +235,40 @@ def _process_batch_item(item: dict[str, Any]) -> dict[str, Any] | None:
     _activity_tracker.warning(f"{tag} Failed to copy file [{full_path_obj.name}]. Will try again later.")
 
     return None
+
+
+def _report_permission_failure(item: dict[str, Any], destination_path: Path, error: CopyPermissionError) -> None:
+    """End a work item as ``FAILED_PERMISSIONS`` and send one Telegram alert about it.
+
+    The status is terminal, so the item is not picked up again and the alert is not repeated.
+
+    Args:
+        item: The work item; its status is updated in the queue.
+        destination_path: The folder the file was being copied to.
+        error: The permission failure.
+    """
+    span = trace.get_current_span()
+    item_id = str(item["id"])
+    filename = Path(item["full_path"]).name
+
+    _activity_tracker.error(f"[I.ID: {item_id}] Could not finish copying [{filename}]: {error}")
+    item["status"] = "FAILED_PERMISSIONS"
+    _work_queue_manager.update(item)
+
+    if span.is_recording():
+        span.set_attribute("work_item.status", "FAILED_PERMISSIONS")
+
+    message = (
+        "<b>⚠️ Could not finish copying a file: permission problem</b>"
+        f"\n<b>File</b>: <code>{html.escape(filename)}</code>"
+        f"\n<b>Item</b>: <code>{html.escape(item_id)}</code>"
+        f"\n<b>Destination</b>: <code>{html.escape(str(destination_path))}</code>"
+        f"\n<b>Error</b>: <code>{html.escape(str(error))}</code>"
+        "\n\nThe item is now FAILED_PERMISSIONS. Fix the permissions, then re-queue it (readme, Item statuses)."
+    )
+    try:
+        send_telegram_message(message)
+    except Exception as e:
+        # Best-effort: the status and the error line above already record the failure. Only the class name is logged,
+        # because a sending error can quote the bot token.
+        _activity_tracker.warning(f"[I.ID: {item_id}] Permission alert not sent ({type(e).__name__}).")

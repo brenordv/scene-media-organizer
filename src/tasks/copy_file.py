@@ -11,6 +11,10 @@ from src.utils import child_process_env, get_otel_log_handler, to_bool_env
 _logger = get_otel_log_handler("Copy File", unique_handler_types=True)
 
 
+class CopyPermissionError(Exception):
+    """A copy failed because the process lacks permission for the source, the destination or the ownership change."""
+
+
 @_logger.trace("copy_file")
 def copy_file(src_file: str, dst_dir: str | Path) -> bool:
     """Copy a file into a directory, retrying up to five times with a growing delay.
@@ -22,6 +26,10 @@ def copy_file(src_file: str, dst_dir: str | Path) -> bool:
     Returns:
         True when the copy (and the optional ownership change) succeeded, False when the source is missing or every
         attempt failed.
+
+    Raises:
+        CopyPermissionError: On the first permission failure. It is not retried, because waiting does not change
+            permissions.
     """
     span = trace.get_current_span()
     src_path = Path(src_file)
@@ -45,15 +53,13 @@ def copy_file(src_file: str, dst_dir: str | Path) -> bool:
         _logger.warning(f"Source file {src_file} does not exist. Will not copy.")
         return False
 
-    if not dst_path.exists():
-        dst_path.mkdir(parents=True, exist_ok=True)
-
     dst_file = dst_path.joinpath(src_path.name)
 
     for i in range(max_retries):
         try:
             _logger.debug(f"Copying file [{src_path.name}] to [{dst_path}]")
 
+            dst_path.mkdir(parents=True, exist_ok=True)
             _copy_file(src_file, dst_file, copy_using_rsync)
 
             if change_ownership:
@@ -61,6 +67,8 @@ def copy_file(src_file: str, dst_dir: str | Path) -> bool:
                 _change_destination_ownership(dst_file, src_file)
 
             return True
+        except PermissionError as e:
+            raise CopyPermissionError(str(e)) from e
         except Exception as e:
             _logger.warning(f"Error copying file [{src_file}] to [{dst_path}]: {str(e)}")
             delay_seconds = base_delay_seconds * (i + 1)
@@ -97,14 +105,19 @@ def _copy_file(src_file: str, dst_file: Path, copy_using_rsync: bool) -> None:
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=child_process_env()
         ) as p:
             assert p.stdout is not None  # stdout=PIPE guarantees a stream
+            permission_denied_line = None
             for line in p.stdout:
                 _logger.debug(line.rstrip())
+                if "Permission denied" in line:
+                    permission_denied_line = line.strip()
 
             exit_code = p.wait()
             success = exit_code == 0
 
             _logger.debug(f"rsync exit code: {exit_code} / Success: {success}")
             if not success:
+                if permission_denied_line is not None:
+                    raise PermissionError(permission_denied_line)
                 raise Exception("Failed to copy file using rsync")
 
     else:

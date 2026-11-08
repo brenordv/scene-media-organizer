@@ -116,7 +116,7 @@ The 2.x flags for Postgres, the API URL, the MQTT host, port and login, and Tele
 - `TELEGRAM_PARSE_MODE` - Telegram parse mode. Defaults to `HTML`.
 - `TELEGRAM_DISABLE_WEB_PREVIEW` - Defaults to `true` when unset (the image sets `false`).
 - `TELEGRAM_DISABLE_NOTIFICATION` - Defaults to `false`.
-- `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` - Defaults to `false`. Copies get the source file's owner; needs root (see "Container").
+- `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` - Defaults to `false`. Copies get the source file's owner; only for a container run as root (see "Container").
 - `WATCHDOG_COPY_USING_RSYNC` - Defaults to `false` (copies with Python).
 - `MQTT_LOG_LEVEL`, `MQTT_TLS_CA_CERT`, `MQTT_KEEPALIVE_SECONDS` - MQTT client tuning.
 
@@ -179,8 +179,15 @@ Terminal failure statuses an item can land on:
 - `FAILED_ID` - the identifier returned no usable metadata.
 - `FAILED_MISSING` - the source file vanished before it could be processed.
 - `FAILED_MAX_ATTEMPTS` - the item failed 5 processing attempts. Transient conditions (identifier unavailable, file still being written) refund the attempt, so only genuine repeated failures reach the cap.
+- `FAILED_PERMISSIONS` - a copy hit a permission problem: an unreadable source, an unwritable library folder, or an ownership change without root. It is not retried, and one Telegram alert names the file, the item id and the error. With the ownership option the file may already be in the library.
 
-All three appear in the batch's Telegram report. To re-queue an item, set `status = 'PENDING', attempts = 0` on its `work_queue` row.
+All of them appear in the batch's Telegram report. To re-queue an item, set `status = 'PENDING', attempts = 0` on its `work_queue` row:
+
+```sql
+UPDATE work_queue SET status = 'PENDING', attempts = 0 WHERE id = '<item id>';
+```
+
+A re-queued item that fails on permissions again sends a new alert. Archives that cannot be read or extracted send no alert: they use up their attempts and end as `FAILED_MAX_ATTEMPTS`.
 
 One exception to the report: `on_demand.py` sweeps orphaned `WORKING` items (left by an earlier crash) back to pending before it builds a batch, and any it caps there are logged to the console only, not to Telegram. The in-batch cap during normal processing does reach the Telegram report.
 
@@ -200,15 +207,29 @@ Identifier 1.x sometimes returned wrong answers (a TV episode as a movie, the wr
 
 ## Container
 
-The image runs as root because `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` calls `chown`. Root is not needed beyond a few capabilities, so the container can drop the rest:
+The image runs as user `1000:1000`. Run it as the user who should own your library, and every file and folder it creates belongs to that user, whoever owns the source:
+
+```bash
+docker run --user "$(id -u):$(id -g)" ...
+```
 
 ```yaml
+user: "1000:1000"
 cap_drop: [ALL]
-cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
 security_opt: ["no-new-privileges:true"]
 ```
 
-With the ownership option off, run it as a regular user (`--user`) that can read the watch folder and write the libraries.
+That user needs:
+
+- Read access to the source files. A file another user owns is fine if it is readable, for example mode `644`, or `640` with the user in its group (`--group-add` or `group_add`). A mode like `600` ends as `FAILED_PERMISSIONS`. So does a library folder the user cannot write to. A file inside a folder the user cannot enter looks like it is gone and ends as `FAILED_MISSING`.
+- Read and write access to the watch folder, because archives are extracted next to themselves.
+- Write access to the movie and series libraries.
+
+Have your downloader write files this user can read, by running as the same user or in its group with a umask like `002` or `022`.
+
+`WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` needs root, because only root can give a file to another user. To use it, run with `--user 0:0` and `cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]`. Without root, the service warns at startup.
+
+A non-root user limits what a compromised archive extractor can do to the container, not to your media: the extractor runs as the same user, so it can still write the library and the watch folder.
 
 Archives are extracted where they are found. A crafted archive can expand far beyond its size (a decompression bomb), so keep the watch folder on a volume where filling the disk is survivable.
 

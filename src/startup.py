@@ -1,5 +1,6 @@
 """Startup steps that run before the connection pool exists: read the settings, then migrate the database."""
 
+import os
 import sys
 from typing import NoReturn
 
@@ -11,7 +12,7 @@ from src.data.db import build_conninfo
 from src.data.migrations import MigrationError, apply_migrations, describe_migration_failure
 from src.secret_store import SecretsError
 from src.settings import load_settings
-from src.utils import flush_all_otel_loggers
+from src.utils import flush_all_otel_loggers, to_bool_env
 
 SETTINGS_ERROR_EXIT_CODE = 2
 MIGRATION_ERROR_EXIT_CODE = 1
@@ -35,6 +36,12 @@ def prepare_services(logger: TracedLogger) -> None:
         load_settings(logger)
     except (SecretsError, ValueError) as e:
         _stop(logger, f"Settings error: {e}", SETTINGS_ERROR_EXIT_CODE)
+
+    if to_bool_env("WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY", False) and hasattr(os, "geteuid") and os.geteuid() != 0:
+        logger.warning(
+            "WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY is on, but changing a file's owner needs root: "
+            "copies of files owned by another user will end as FAILED_PERMISSIONS. Turn it off or run as root."
+        )
 
     try:
         apply_migrations(build_conninfo(), logger)

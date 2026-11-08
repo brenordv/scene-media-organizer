@@ -9,7 +9,8 @@ Settings move to Infisical, the database schema is managed by migrations at star
 2. Create the `MEDIA_ORGANIZER_*` secrets in Infisical and a machine identity that can read them; pass its `INFISICAL_*` bootstrap variables to the container.
 3. Point `MEDIA_ORGANIZER_MEDIA_IDENTIFIER_URL` at a media identifier 2.0 (its base URL, without `/api/guess`).
 4. Rotate the Telegram bot token: 2.x could write it to the `activity_tracker` table, OTEL logs and traces when sending failed. Rows and telemetry that hold the old token stay readable until you delete or expire them (for example `DELETE FROM activity_tracker WHERE activity LIKE '%/bot%'`).
-5. Optionally run `on_demand.py recheck` to find media filed from identifier 1.x answers that 2.0 would file elsewhere.
+5. Choose the user that owns your library and run the container as it (`--user "$(id -u):$(id -g)"` or compose `user:`). 2.x wrote as root, so give the library folders to that user once on the host: `chown -R UID:GID <library folder>`. It also needs read and write access to the watch folder (see readme, "Container").
+6. Optionally run `on_demand.py recheck` to find media filed from identifier 1.x answers that 2.0 would file elsewhere.
 
 ### Breaking changes
 - Requires Python 3.14 (`.python-version`); the image is built on `python:3.14-slim`.
@@ -18,8 +19,10 @@ Settings move to Infisical, the database schema is managed by migrations at star
 - The container health check reads a heartbeat file the service writes every minute instead of opening TCP connections to Postgres and MQTT; its start period is 120 s.
 - `TELEGRAM_API_BASE` must be an https URL.
 - Requires PostgreSQL 13 or newer.
+- The image runs as user `1000:1000` instead of root. `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` now needs `--user 0:0`; without root the service warns at startup.
 
 ### Added
+- `FAILED_PERMISSIONS`: a copy that hits a permission problem ends here without retrying and sends one Telegram alert naming the file, the item id and the error.
 - Startup database migrations (`migrations/`, ledger table `schema_migrations`, advisory lock so concurrent starts apply each file once). A fresh database is set up on the first start; existing tables are adopted unchanged.
 - `sql/create_app_role.sql` (new role and database) and `sql/grant_existing_database.sql` (dedicated role for an existing install).
 - `on_demand.py recheck`: re-identifies filed media and reports files the identifier would now file elsewhere; read-only.

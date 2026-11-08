@@ -29,6 +29,22 @@ def test_prepare_services_reads_settings_then_migrates(migrations: list[str]) ->
     assert migrations == ["postgresql://media_organizer:test-password@db.test:5432/smo_watchdog"]
 
 
+@pytest.mark.parametrize(
+    ("option", "euid", "warned"), [("true", 1000, True), ("false", 1000, False), ("true", 0, False)]
+)
+def test_prepare_services_warns_only_when_ownership_option_is_on_without_root(
+    migrations: list[str], monkeypatch: pytest.MonkeyPatch, option: str, euid: int, warned: bool
+) -> None:
+    monkeypatch.setenv("WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY", option)
+    monkeypatch.setattr("os.geteuid", lambda: euid, raising=False)
+    logger = RecordingLogger()
+
+    prepare_services(as_traced(logger))
+
+    warnings = [text for level, text in logger.lines if level == "warning" and "OWNERSHIP_ON_COPY" in text]
+    assert bool(warnings) is warned
+
+
 def test_prepare_services_missing_setting_exits_2_before_migrating(
     secret_values: dict[str, str], migrations: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:

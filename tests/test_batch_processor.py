@@ -1,11 +1,14 @@
 import os
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 from src import batch_processor as processor_module
 from src.batch_processor import _process_batch_item, process_batch
+from src.secret_store import SecretsError
+from src.tasks.copy_file import CopyPermissionError
 from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError
 
 MOVIES = Path(os.environ["MOVIES_BASE_FOLDER"])
@@ -238,3 +241,92 @@ def test_failed_copy_leaves_item_unfinished(
     _process_batch_item(_item(media_file))
 
     assert recorder.updates[-1]["status"] == "WORKING"
+
+
+@pytest.fixture
+def denied_copy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    _identify_returns(monkeypatch, {"id": "cache-1", "media_type": "movie", "title": "A", "year": 2001})
+    attempts: list[str] = []
+
+    def fake_copy(source: str, destination: Path) -> bool:
+        attempts.append(source)
+        raise CopyPermissionError("Permission denied: <source>")
+
+    monkeypatch.setattr(processor_module, "copy_file", fake_copy)
+    return attempts
+
+
+@pytest.fixture
+def telegram_messages(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    messages: list[str] = []
+
+    def fake_send(message: str) -> bool:
+        messages.append(message)
+        return True
+
+    monkeypatch.setattr(processor_module, "send_telegram_message", fake_send)
+    return messages
+
+
+def test_copy_permission_failure_is_terminal_with_one_alert(
+    recorder: _Recorder, media_file: Path, denied_copy: list[str], telegram_messages: list[str]
+) -> None:
+    result = _process_batch_item(_item(media_file))
+
+    assert result is None
+    assert recorder.updates[-1]["status"] == "FAILED_PERMISSIONS"
+    assert len(telegram_messages) == 1
+
+
+def test_copy_permission_failure_alerts_once_across_the_batch_and_its_retry_pass(
+    recorder: _Recorder,
+    media_file: Path,
+    denied_copy: list[str],
+    telegram_messages: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(processor_module._work_queue_manager, "move_working_items_back_to_pending", lambda batch: None)
+    monkeypatch.setattr(processor_module._work_queue_manager, "set_batch_as_done", lambda batch: None)
+    monkeypatch.setattr(processor_module._work_queue_manager, "get_batch_data", lambda batch: [])
+    monkeypatch.setattr(processor_module._work_queue_manager, "update_batch_verification", lambda batch, ok: None)
+    monkeypatch.setattr(processor_module._notification_agent, "post_message", lambda message: None)
+
+    process_batch([_item(media_file)], "batch-1")
+
+    assert len(denied_copy) == 1
+    assert len(telegram_messages) == 1
+
+
+def test_permission_alert_escapes_values_and_accepts_a_uuid_item_id(
+    recorder: _Recorder, tmp_path: Path, denied_copy: list[str], telegram_messages: list[str]
+) -> None:
+    item_id = uuid4()
+    source = tmp_path / "Tom & Jerry.mkv"
+    source.write_bytes(b"video")
+
+    _process_batch_item(dict(_item(source), id=item_id))
+
+    assert "Tom &amp; Jerry.mkv" in telegram_messages[0]
+    assert "Permission denied: &lt;source&gt;" in telegram_messages[0]
+    assert str(item_id) in telegram_messages[0]
+
+
+def test_permission_alert_rejected_by_telegram_keeps_the_status(
+    recorder: _Recorder, media_file: Path, denied_copy: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(processor_module, "send_telegram_message", lambda message: False)
+
+    assert _process_batch_item(_item(media_file)) is None
+    assert recorder.updates[-1]["status"] == "FAILED_PERMISSIONS"
+
+
+def test_permission_alert_that_raises_keeps_the_status(
+    recorder: _Recorder, media_file: Path, denied_copy: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_send(message: str) -> bool:
+        raise SecretsError("Infisical cannot be read")
+
+    monkeypatch.setattr(processor_module, "send_telegram_message", failing_send)
+
+    assert _process_batch_item(_item(media_file)) is None
+    assert recorder.updates[-1]["status"] == "FAILED_PERMISSIONS"
