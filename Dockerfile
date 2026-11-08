@@ -56,24 +56,13 @@ WORKDIR /app
 # Files stay owned by root. The process also runs as root, because WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY calls chown.
 COPY --from=builder /app /app
 
-# App configuration (override at runtime). Do NOT add MQTT_USERNAME or
-# MQTT_PASSWORD here: NotificationRepository treats a set-but-empty username
-# as real credentials and would authenticate with empty strings.
+# App configuration (override at runtime). Service addresses and credentials are
+# not here: they come from Infisical, reached with the INFISICAL_* bootstrap
+# variables passed at runtime (see readme).
 ENV WATCH_FOLDER="" \
     MOVIES_BASE_FOLDER="" \
     SERIES_BASE_FOLDER="" \
-    POSTGRES_HOST="" \
-    POSTGRES_PORT="5432" \
-    POSTGRES_USER="" \
-    POSTGRES_PASSWORD="" \
-    POSTGRES_DB="" \
-    API_URL="" \
-    MQTT_HOST="" \
-    MQTT_PORT="1883" \
     MQTT_BASE_TOPIC="notifications" \
-    MQTT_CLIENT_ID="" \
-    TELEGRAM_BOT_TOKEN="" \
-    TELEGRAM_CHAT_ID="" \
     TELEGRAM_PARSE_MODE="HTML" \
     TELEGRAM_DISABLE_WEB_PREVIEW="false" \
     TELEGRAM_DISABLE_NOTIFICATION="false" \
@@ -83,6 +72,7 @@ ENV WATCH_FOLDER="" \
 COPY healthcheck.py /usr/local/bin/healthcheck.py
 RUN chmod +x /usr/local/bin/healthcheck.py
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python /usr/local/bin/healthcheck.py || exit 1
+# The service writes its first heartbeat a minute after start, once settings, migrations and the pool are up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python /usr/local/bin/healthcheck.py || exit 1
 
 CMD ["python", "main.py"]

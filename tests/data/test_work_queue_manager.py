@@ -54,22 +54,35 @@ def test_update_sets_every_column_except_identity_and_timestamps(
     assert params == ["DONE", "/movies/A", "item-1"]
 
 
+def test_update_rejects_fields_that_are_not_columns(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
+    with pytest.raises(ValueError, match="status; DROP"):
+        manager.update({"id": "item-1", "status; DROP TABLE work_queue; --": "x"})
+
+    assert _statements(fake_db, "UPDATE work_queue") == []
+
+
 def test_get_next_batch_with_batch_in_progress_returns_empty(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
-    fake_db.queue_result([("batch-1", "item-9", True, False, NOW, NOW)])
+    fake_db.queue_result([(True,)])
 
     batch, batch_id = manager.get_next_batch(batch_id="batch-1")
 
     assert batch == []
     assert batch_id == "batch-1"
+    assert fake_db.queries()[0] == "SELECT EXISTS (SELECT 1 FROM batch_control WHERE in_progress = TRUE)"
 
 
 def test_get_next_batch_claims_pending_items_into_a_new_batch(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
-    fake_db.queue_result([])
+    fake_db.queue_result([(False,)])
     fake_db.queue_result([_work_row("item-1"), _work_row("item-2")])
 
     batch, batch_id = manager.get_next_batch()
 
     memberships = _statements(fake_db, "INSERT INTO batch_control")
+    claim = _statements(fake_db, "UPDATE work_queue")[0][0]
+    assert claim.endswith(
+        "RETURNING id, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, "
+        "created_at, modified_at, media_info_cache_id, attempts"
+    )
     assert [item["id"] for item in batch] == ["item-1", "item-2"]
     assert batch_id is not None
     assert [params for _, params in memberships] == [(batch_id, "item-1"), (batch_id, "item-2")]
@@ -126,6 +139,25 @@ def test_release_interrupted_items_caps_then_refunds(manager: WorkQueueManager, 
     updates = _statements(fake_db, "UPDATE work_queue")
     assert "FAILED_MAX_ATTEMPTS" in updates[0][0]
     assert "GREATEST(attempts - 1, 0)" in updates[1][0]
+
+
+def test_get_filed_items_selects_done_non_archive_items_with_a_target(
+    manager: WorkQueueManager, fake_db: FakeDatabase
+) -> None:
+    fake_db.queue_result([_work_row("item-1", status="DONE")])
+
+    items = manager.get_filed_items()
+
+    query = fake_db.queries()[0]
+    assert "WHERE status = 'DONE' AND NOT is_archive AND target_path IS NOT NULL" in query
+    assert [item["id"] for item in items] == ["item-1"]
+
+
+def test_get_filed_items_database_error_raises_runtime_error(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
+    fake_db.fail_with = psycopg.OperationalError("down")
+
+    with pytest.raises(RuntimeError, match="Error reading filed items"):
+        manager.get_filed_items()
 
 
 def test_filter_only_existing_filenames_returns_known_names(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:

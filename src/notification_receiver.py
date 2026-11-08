@@ -306,6 +306,11 @@ def _handle_notification(topic: str, payload_bytes: bytes) -> None:
         send_telegram_message(msg)
 
 
+def is_connected() -> bool:
+    """Whether the notification receiver currently holds a broker connection."""
+    return _notification_agent.is_connected
+
+
 def handle_notification_messages() -> None:
     _activity_logger.debug("Starting to listen for notification messages...")
     _notification_agent.start_reading(message_handler=_handle_notification, background=False)

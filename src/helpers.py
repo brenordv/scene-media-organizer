@@ -69,21 +69,26 @@ def select_new_files(files_found: Iterable[tuple[str, str]], existing_filenames:
     return [full_path for full_path, filename in files_found if filename not in existing]
 
 
+WORK_ITEM_COLUMNS = (
+    "id",
+    "full_path",
+    "filename",
+    "parent",
+    "target_path",
+    "status",
+    "is_archive",
+    "is_main_archive_file",
+    "created_at",
+    "modified_at",
+    "media_info_cache_id",
+    "attempts",
+)
+"""The ``work_queue`` columns every work-item query selects, in this order."""
+
+
 def parse_work_item_row(row: Sequence[Any]) -> dict[str, Any]:
-    return {
-        "id": row[0],
-        "full_path": row[1],
-        "filename": row[2],
-        "parent": row[3],
-        "target_path": row[4],
-        "status": row[5],
-        "is_archive": row[6],
-        "is_main_archive_file": row[7],
-        "created_at": row[8],
-        "modified_at": row[9],
-        "media_info_cache_id": row[10],
-        "attempts": row[11],
-    }
+    """Map a row selected with ``WORK_ITEM_COLUMNS`` to a work item keyed by column name."""
+    return dict(zip(WORK_ITEM_COLUMNS, row, strict=True))
 
 
 def partition_open_batches(

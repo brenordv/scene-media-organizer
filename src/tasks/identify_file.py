@@ -1,15 +1,14 @@
 """Client for the media identifier API (2.0): ``GET {base}/api/guess?it=<path>``."""
 
-import os
 from typing import Any
 
 import requests
 from opentelemetry import trace
 from raccoontools.decorators.retry import retry, retry_request
 
-from src.utils import get_otel_log_handler, parse_base_url
+from src.settings import media_identifier_base_url
+from src.utils import get_otel_log_handler
 
-IDENTIFIER_URL_SETTING = "API_URL"
 GUESS_PATH = "/api/guess"
 # Answers that will not change on a retry: 204 means not media or unidentified, 4xx means a bad request.
 FINAL_EMPTY_STATUSES = frozenset({204, 400, 404, 422})
@@ -33,18 +32,6 @@ class IdentifierError(Exception):
 
 class IdentifierUnavailableError(IdentifierError):
     """The identifier, or a service it depends on, could not be reached; the same request can succeed later."""
-
-
-def get_identifier_base_url() -> str:
-    """Return the media identifier base URL from ``API_URL``.
-
-    Returns:
-        The base URL, without a trailing slash.
-
-    Raises:
-        ValueError: If ``API_URL`` is unset, or not an http(s) URL with a host and no credentials, query or fragment.
-    """
-    return parse_base_url(os.environ.get(IDENTIFIER_URL_SETTING, ""), IDENTIFIER_URL_SETTING)
 
 
 # Network errors re-run the whole status-retry loop, so one call makes at most
@@ -94,7 +81,7 @@ def identify_file(full_path: str) -> dict[str, Any] | None:
         span.set_attribute("file.path", full_path)
 
     try:
-        response = _request_identify(f"{get_identifier_base_url()}{GUESS_PATH}", full_path)
+        response = _request_identify(f"{media_identifier_base_url()}{GUESS_PATH}", full_path)
     except requests.RequestException as e:
         _record(span, "unavailable")
         raise IdentifierUnavailableError(f"Media identifier unreachable ({type(e).__name__})") from None

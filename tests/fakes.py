@@ -1,12 +1,53 @@
-"""Test doubles for the PostgreSQL pool: every statement is recorded and answered from a queue of results."""
+"""Test doubles: a PostgreSQL pool that records statements and answers from a queue, and a recording logger."""
 
 from collections import deque
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
+
+from simple_log_factory_ext_otel import TracedLogger
+
+
+class RecordingLogger:
+    """Stands in for a ``TracedLogger``: keeps every line as ``(level, text)``; spans do nothing."""
+
+    def __init__(self) -> None:
+        self.lines: list[tuple[str, str]] = []
+
+    def debug(self, text: str) -> None:
+        self.lines.append(("debug", text))
+
+    def info(self, text: str) -> None:
+        self.lines.append(("info", text))
+
+    def warning(self, text: str) -> None:
+        self.lines.append(("warning", text))
+
+    def error(self, text: str) -> None:
+        self.lines.append(("error", text))
+
+    def exception(self, text: str) -> None:
+        self.lines.append(("exception", text))
+
+    @contextmanager
+    def span(self, name: str) -> Iterator[None]:
+        yield
+
+
+def as_traced(logger: RecordingLogger) -> TracedLogger:
+    """Hand a :class:`RecordingLogger` to code typed for a ``TracedLogger``."""
+    return cast(TracedLogger, logger)
+
 
 Row = tuple[Any, ...]
 ACTIVITY_INSERT_PREFIX = "INSERT INTO activity_tracker"
+
+TEST_SECRETS = {
+    "MEDIA_ORGANIZER_POSTGRES_CONNECTION_STRING": "postgresql://media_organizer:test-password@db.test:5432/smo_watchdog",
+    "MEDIA_ORGANIZER_MEDIA_IDENTIFIER_URL": "http://media-identifier.test:10147",
+    "MEDIA_ORGANIZER_MQTT_HOST": "mqtt.test",
+}
+"""Infisical settings every test starts with: the required ones, set to values that pass validation."""
 
 
 class FakeDatabase:

@@ -8,6 +8,8 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
 from src.data.notification_repository import NotificationRepository
+from src.secret_store import SecretsError
+from src.settings import MQTT_HOST_SECRET, MQTT_PASSWORD_SECRET, MQTT_PORT_SECRET, MQTT_USERNAME_SECRET
 
 
 class _PublishResult:
@@ -39,10 +41,21 @@ def test_client_uses_callback_api_version_2(repository: NotificationRepository) 
     assert repository._client.callback_api_version == CallbackAPIVersion.VERSION2
 
 
-def test_missing_broker_host_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MQTT_HOST", raising=False)
+def test_broker_settings_come_from_the_secret_store(secret_values: dict[str, str]) -> None:
+    secret_values[MQTT_PORT_SECRET] = "8883"
+    secret_values[MQTT_USERNAME_SECRET] = "organizer"
+    secret_values[MQTT_PASSWORD_SECRET] = "broker-password"
 
-    with pytest.raises(ValueError, match="MQTT broker host"):
+    repo = NotificationRepository()
+
+    assert (repo._broker_host, repo._broker_port) == ("mqtt.test", 8883)
+    assert repo._client._username == b"organizer"
+
+
+def test_missing_broker_host_raises(secret_values: dict[str, str]) -> None:
+    del secret_values[MQTT_HOST_SECRET]
+
+    with pytest.raises(SecretsError, match=MQTT_HOST_SECRET):
         NotificationRepository()
 
 

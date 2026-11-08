@@ -3,55 +3,63 @@ import os
 import sys
 from pathlib import Path
 
-from src.config import add_config_arguments, apply_config, require_env
+from src.config import USAGE_ERROR_EXIT_CODE, add_config_arguments, apply_config, parse_command_line, require_env
+
+STOPPED_EARLY_EXIT_CODE = 1
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run scene-media-organizer maintenance commands.")
     parser.add_argument(
         "command",
-        choices=["batch", "missing"],
+        choices=["batch", "missing", "recheck"],
         help="batch: process all pending items. "
-        "missing: queue files present on disk but absent from the queue, then process.",
+        "missing: queue files present on disk but absent from the queue, then process. "
+        "recheck: identify filed media again and report files that would now be filed elsewhere (read-only).",
     )
     parser.add_argument(
         "-y", "--yes", action="store_true", help="Skip the confirmation prompt (for non-interactive runs)."
     )
     add_config_arguments(parser)
-    return parser.parse_args(argv)
+    return parse_command_line(parser, argv)
 
 
 _args = _parse_args(sys.argv[1:])
 apply_config(_args)
-require_env(
-    "WATCH_FOLDER",
-    "MOVIES_BASE_FOLDER",
-    "SERIES_BASE_FOLDER",
-    "POSTGRES_HOST",
-    "API_URL",
-    "MQTT_HOST",
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-)
+require_env("WATCH_FOLDER", "MOVIES_BASE_FOLDER", "SERIES_BASE_FOLDER", "OTEL_EXPORTER_OTLP_ENDPOINT")
 
-from src.data.db import init_pool, shutdown_pool  # noqa: E402
+# Startup logs through the OTEL-only TracedLogger: ActivityTracker writes to a
+# database that is not reachable yet.
+from src.secret_store import SecretsError
+from src.settings import load_settings
+from src.utils import flush_all_otel_loggers, get_otel_log_handler
+
+_startup_logger = get_otel_log_handler("On Demand Startup", unique_handler_types=True)
+
+try:
+    load_settings(_startup_logger)
+except (SecretsError, ValueError) as settings_error:
+    print(f"Settings error: {settings_error}", file=sys.stderr)
+    flush_all_otel_loggers()
+    sys.exit(USAGE_ERROR_EXIT_CODE)
+
+from src.data.db import init_pool, shutdown_pool
 
 init_pool()
 
-# Imports below this line intentionally run after configuration is applied,
-# because these modules read the environment at import time.
-from src.batch_processor import process_batch  # noqa: E402
-from src.data.activity_logger import ActivityTracker  # noqa: E402
-from src.data.notification_repository import NotificationRepository  # noqa: E402
-from src.data.work_queue_manager import WorkQueueManager  # noqa: E402
-from src.helpers import select_new_files  # noqa: E402
-from src.queue_worker import prepare_file_for_processing  # noqa: E402
-from src.utils import flush_all_otel_loggers  # noqa: E402
+# Imports below this line intentionally run after the pool exists, because
+# these modules build repositories at import time.
+from src.batch_processor import process_batch
+from src.catch_up import queue_untracked_files
+from src.data.activity_logger import ActivityTracker
+from src.data.work_queue_manager import WorkQueueManager
+from src.recheck import format_report, recheck_filed_items
+from src.tasks.identify_file import identify_file
 
 _work_queue_manager = WorkQueueManager()
 _watch_folder = os.environ["WATCH_FOLDER"]
 _movies_base_folder = os.environ["MOVIES_BASE_FOLDER"]
 _series_base_folder = os.environ["SERIES_BASE_FOLDER"]
-_notification_agent = NotificationRepository(client_id="smo-watchdog-notification-sender")
 _activity_tracker = ActivityTracker("On Demand")
 
 _run_started = False
@@ -126,58 +134,54 @@ def on_demand_batch() -> None:
 
 def on_demand_process_missing_add() -> None:
     tag = "[MISSING]"
-    watch_folder = Path(_watch_folder)
 
     _activity_tracker.info(f"{tag} Reading watch folder recursively...")
-    files_found = set()
-    for item in watch_folder.rglob("*"):
-        if item.is_dir():
-            _activity_tracker.debug(f" {tag} Ignoring directory: {item}")
-            continue
-
-        _activity_tracker.debug(f"{tag} Found file: {item}")
-        files_found.add((str(item.resolve()), item.name))
-
-    _activity_tracker.info(f"{tag} Found {len(files_found)} files in the watch folder.")
-    filenames = [f[1] for f in files_found]
-    existing_filenames = _work_queue_manager.filter_only_existing_filenames(filenames)
-
-    _activity_tracker.info(f"{tag} Found {len(existing_filenames)} existing files in the queue.")
-
-    new_files = select_new_files(files_found, existing_filenames)
-    if not new_files:
+    queued = queue_untracked_files(Path(_watch_folder))
+    if queued == 0:
         _activity_tracker.info(f"{tag} No new files found to add to the queue.")
         return
 
-    _activity_tracker.info(f"{tag} Found {len(new_files)} new files to add to the queue.")
-
-    for new_file in new_files:
-        _activity_tracker.debug(f"{tag} Adding new file to the queue: {new_file}")
-        prepare_file_for_processing(new_file)
-
+    _activity_tracker.info(f"{tag} Added {queued} new file(s) to the queue.")
     on_demand_batch()
 
 
-def main() -> None:
+def on_demand_recheck() -> int:
+    """Print which filed media the identifier would now file elsewhere. Returns the exit code."""
+    print("Re-identifying filed media; nothing is moved or changed.")
+    report = recheck_filed_items(
+        _work_queue_manager.get_filed_items(),
+        identify_file,
+        Path(_movies_base_folder),
+        Path(_series_base_folder),
+    )
+    print(format_report(report))
+    return STOPPED_EARLY_EXIT_CODE if report.stopped_early else 0
+
+
+def main() -> int:
+    command = _args.command
+    if command == "recheck":
+        return on_demand_recheck()
+
     if not _args.yes:
         print("\nATTENTION: It is advisable to stop the container service before running this command!")
         print("Press ENTER to continue or CTRL+C to abort.")
         input()
 
-    command = _args.command
-
     if command == "batch":
         on_demand_batch()
     elif command == "missing":
         on_demand_process_missing_add()
+    return 0
 
 
 if __name__ == "__main__":
     print("Flushing buffered OTEL log records before starting.")
     flush_all_otel_loggers()
 
+    exit_code = 0
     try:
-        main()
+        exit_code = main()
     except KeyboardInterrupt:
         if not _run_started:
             print("\nAborted before any work started. Nothing to clean up.")
@@ -193,3 +197,4 @@ if __name__ == "__main__":
         sys.exit(130)
     finally:
         shutdown_pool()
+    sys.exit(exit_code)

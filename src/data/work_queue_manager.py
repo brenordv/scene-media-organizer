@@ -6,11 +6,13 @@ from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
 from src.data.base_repository import BaseRepository
-from src.helpers import parse_work_item_row, partition_open_batches
+from src.helpers import WORK_ITEM_COLUMNS, parse_work_item_row, partition_open_batches
 
 _activity_tracker = ActivityTracker("Work Queue Manager")
 
 _MAX_ATTEMPTS = 5
+_READ_ONLY_COLUMNS = ("id", "created_at", "modified_at")
+_WORK_ITEM_SELECT = ", ".join(WORK_ITEM_COLUMNS)
 
 
 class WorkQueueManager(BaseRepository):
@@ -288,6 +290,11 @@ class WorkQueueManager(BaseRepository):
                 }
             )
 
+        keys = [key for key in work_item.keys() if key not in _READ_ONLY_COLUMNS]
+        unknown_keys = [key for key in keys if key not in WORK_ITEM_COLUMNS]
+        if unknown_keys:
+            raise ValueError(f"Work item fields {unknown_keys} are not work_queue columns.")
+
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -300,15 +307,8 @@ class WorkQueueManager(BaseRepository):
                         f"target path: {target_path}, status: {status}"
                     )
 
-                    keys = [key for key in work_item.keys() if key not in ["id", "created_at", "modified_at"]]
-                    values = []
-                    fields = []
-
-                    for key in keys:
-                        values.append(work_item[key])
-                        fields.append(f"{key} = %s")
-
-                    fields_str = ", ".join(fields)
+                    values = [work_item[key] for key in keys]
+                    fields_str = ", ".join(f"{key} = %s" for key in keys)
 
                     update_query = f"UPDATE work_queue SET {fields_str} WHERE id = %s"
                     cursor.execute(update_query, values + [work_item_id])
@@ -340,26 +340,22 @@ class WorkQueueManager(BaseRepository):
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     if reuse_batch_id is None:
-                        select_query = "SELECT * FROM batch_control WHERE in_progress = TRUE"
-                        cursor.execute(select_query)
+                        cursor.execute("SELECT EXISTS (SELECT 1 FROM batch_control WHERE in_progress = TRUE)")
                         row = cursor.fetchone()
 
-                        if row is not None and not force_new_batch:
+                        if row is not None and row[0] and not force_new_batch:
                             _activity_tracker.debug(
                                 f"Batch [{batch_id}] is already in progress. Returning empty batch..."
                             )
                             return [], batch_id
 
-                    update_and_select_query = """
+                    update_and_select_query = f"""
                                               UPDATE work_queue
                                               SET status = 'WORKING',
                                                   attempts = attempts + 1,
                                                   modified_at = CURRENT_TIMESTAMP
                                               WHERE status = 'PENDING'
-                                              RETURNING id, full_path, filename, parent, target_path,
-                                                        status, is_archive, is_main_archive_file,
-                                                        created_at, modified_at,
-                                                        media_info_cache_id, attempts"""
+                                              RETURNING {_WORK_ITEM_SELECT}"""
 
                     cursor.execute(update_and_select_query)
                     rows = cursor.fetchall()
@@ -508,7 +504,7 @@ class WorkQueueManager(BaseRepository):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    select_query = """SELECT * FROM work_queue
+                    select_query = f"""SELECT {_WORK_ITEM_SELECT} FROM work_queue
                                       WHERE id IN (SELECT work_queue_id FROM batch_control WHERE batch_id = %s)"""
                     cursor.execute(select_query, (batch_id,))
                     rows = cursor.fetchall()
@@ -547,13 +543,36 @@ class WorkQueueManager(BaseRepository):
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    _activity_tracker.debug(f"Checking database for filenames: {filenames}")
+                    _activity_tracker.debug(f"Checking the database for {len(filenames)} filename(s)")
                     select_query = """SELECT distinct filename FROM work_queue WHERE filename = ANY(%s)"""
                     cursor.execute(select_query, (filenames,))
                     rows = cursor.fetchall()
                     return [row[0] for row in rows]
         except psycopg.Error as e:
             error_message = f"Error checking database for filenames: {str(e)}"
+            _activity_tracker.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.get_filed_items")
+    def get_filed_items(self) -> list[dict[str, Any]]:
+        """Return every item that was copied into the library: status DONE, not an archive, with a target path.
+
+        Returns:
+            The work items, oldest first.
+
+        Raises:
+            RuntimeError: If the query fails.
+        """
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    select_query = f"""SELECT {_WORK_ITEM_SELECT} FROM work_queue
+                                       WHERE status = 'DONE' AND NOT is_archive AND target_path IS NOT NULL
+                                       ORDER BY created_at"""
+                    cursor.execute(select_query)
+                    return [self._parse_work_item_row_to_object(row) for row in cursor.fetchall()]
+        except psycopg.Error as e:
+            error_message = f"Error reading filed items: {str(e)}"
             _activity_tracker.error(error_message)
             raise RuntimeError(error_message) from e
 

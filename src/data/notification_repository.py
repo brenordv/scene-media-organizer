@@ -11,6 +11,7 @@ from paho.mqtt.reasoncodes import ReasonCode
 from raccoontools.shared.serializer import obj_dump_serializer
 
 from src.data.activity_logger import ActivityTracker
+from src.settings import DEFAULT_MQTT_PORT, mqtt_settings
 from src.utils import to_int
 
 PayloadType = str | bytes | dict[str, Any]
@@ -40,17 +41,15 @@ class NotificationRepository:
         resolved_log_level = (log_level or os.getenv("MQTT_LOG_LEVEL") or "DEBUG").upper()
         self._logger = ActivityTracker("Notification Repository", resolved_log_level)
 
-        host = broker_host or os.getenv("MQTT_HOST")
-        if not host:
-            raise ValueError(
-                "MQTT broker host not configured. Provide 'broker_host' or set environment variable 'MQTT_HOST'."
-            )
+        # Explicit arguments win; the broker's address and login otherwise come from the Infisical settings.
+        broker = mqtt_settings() if broker_host is None else None
+        host = broker_host or (broker.host if broker else "")
+        port = broker_port if broker_port is not None else (broker.port if broker else DEFAULT_MQTT_PORT)
+        username_final = username if username is not None else (broker.username if broker else None)
+        password_final = password if password is not None else (broker.password if broker else None)
 
-        port = broker_port if broker_port is not None else to_int(os.getenv("MQTT_PORT"), 1883)
         topic = (base_topic or os.getenv("MQTT_BASE_TOPIC") or "notifications").strip()
         client_id_final = client_id or os.getenv("MQTT_CLIENT_ID")
-        username_final = username or os.getenv("MQTT_USERNAME")
-        password_final = password or os.getenv("MQTT_PASSWORD")
         tls_ca_cert_final = tls_ca_cert or os.getenv("MQTT_TLS_CA_CERT")
         keepalive_final = (
             keepalive_seconds if keepalive_seconds is not None else to_int(os.getenv("MQTT_KEEPALIVE_SECONDS"), 60)

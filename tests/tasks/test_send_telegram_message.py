@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 import requests
 
+from src.settings import TELEGRAM_BOT_TOKEN_SECRET, TELEGRAM_CHAT_ID_SECRET
 from src.tasks import send_telegram_message as telegram_module
 from src.tasks.send_telegram_message import send_telegram_message
 
@@ -23,9 +24,9 @@ class _Response:
 
 
 @pytest.fixture
-def telegram_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", f"  {BOT_TOKEN}\n")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", CHAT_ID)
+def telegram_configured(secret_values: dict[str, str]) -> None:
+    secret_values[TELEGRAM_BOT_TOKEN_SECRET] = f"  {BOT_TOKEN}\n"
+    secret_values[TELEGRAM_CHAT_ID_SECRET] = CHAT_ID
 
 
 @pytest.fixture

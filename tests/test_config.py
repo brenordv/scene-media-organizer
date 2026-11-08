@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import ENV_FLAG_MAP, add_config_arguments, apply_config, require_env
+from src.config import ENV_FLAG_MAP, add_config_arguments, apply_config, parse_command_line, require_env
 
 
 @pytest.fixture(autouse=True)
@@ -82,3 +82,41 @@ def test_require_env_exits_2_and_names_every_missing(
 def test_require_env_passes_when_all_present(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SMO_TEST_A", "x")
     require_env("SMO_TEST_A")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="main.py")
+    add_config_arguments(parser)
+    return parser
+
+
+def test_parse_command_line_accepts_known_flags() -> None:
+    args = parse_command_line(_parser(), ["--watch-folder", "/watch"])
+
+    assert args.watch_folder == "/watch"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--postgres-password", "hunter2"], ["--postgres-password=hunter2"], ["--telegram-bot-token", "hunter2"]],
+)
+def test_parse_command_line_removed_secret_flag_exits_2_without_echoing_the_value(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_command_line(_parser(), argv)
+
+    stderr = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert "no longer a command-line flag" in stderr
+    assert "hunter2" not in stderr
+
+
+def test_parse_command_line_unknown_flag_exits_2_naming_it(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_command_line(_parser(), ["--bogus", "value"])
+
+    stderr = capsys.readouterr().err
+    assert exc.value.code == 2
+    assert "Unrecognized option: --bogus" in stderr
+    assert "value" not in stderr.replace("Unrecognized arguments", "")

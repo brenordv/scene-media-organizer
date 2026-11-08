@@ -4,6 +4,8 @@ from typing import Any
 import pytest
 import requests
 
+from src.secret_store import SecretsError
+from src.settings import MEDIA_IDENTIFIER_URL_SECRET as URL_SECRET
 from src.tasks.identify_file import IdentifierError, IdentifierUnavailableError, identify_file
 
 BASE_URL = "http://media-identifier:10147"
@@ -36,8 +38,8 @@ class _FakeIdentifier:
 
 
 @pytest.fixture(autouse=True)
-def _configured(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("API_URL", f"{BASE_URL}/")
+def _configured(monkeypatch: pytest.MonkeyPatch, secret_values: dict[str, str]) -> Iterator[None]:
+    secret_values[URL_SECRET] = f"{BASE_URL}/"
     monkeypatch.setattr("raccoontools.decorators.retry.sleep", lambda seconds: None)
     yield
 
@@ -118,10 +120,22 @@ def test_identify_file_200_without_a_record_raises_identifier_error(monkeypatch:
         identify_file(FILE_PATH)
 
 
-@pytest.mark.parametrize("api_url", ["", "media-identifier:10147", "http://user:pass@media-identifier", "ftp://x"])
-def test_identify_file_invalid_base_url_raises_value_error(monkeypatch: pytest.MonkeyPatch, api_url: str) -> None:
-    monkeypatch.setenv("API_URL", api_url)
+@pytest.mark.parametrize("api_url", ["media-identifier:10147", "http://user:pass@media-identifier", "ftp://x"])
+def test_identify_file_invalid_base_url_raises_value_error(
+    monkeypatch: pytest.MonkeyPatch, secret_values: dict[str, str], api_url: str
+) -> None:
+    secret_values[URL_SECRET] = api_url
     _serve(monkeypatch, _Response(200, RECORD))
 
-    with pytest.raises(ValueError, match="API_URL"):
+    with pytest.raises(ValueError, match=URL_SECRET):
+        identify_file(FILE_PATH)
+
+
+def test_identify_file_missing_base_url_raises_secrets_error(
+    monkeypatch: pytest.MonkeyPatch, secret_values: dict[str, str]
+) -> None:
+    del secret_values[URL_SECRET]
+    _serve(monkeypatch, _Response(200, RECORD))
+
+    with pytest.raises(SecretsError, match=URL_SECRET):
         identify_file(FILE_PATH)

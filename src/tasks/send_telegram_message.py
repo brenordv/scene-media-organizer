@@ -4,6 +4,7 @@ import requests
 from opentelemetry import trace
 
 from src.data.activity_logger import ActivityTracker
+from src.settings import telegram_credentials
 from src.utils import get_env, get_telegram_api_base, to_bool_env
 
 _REQUEST_TIMEOUT_SECONDS = 10
@@ -35,25 +36,23 @@ def send_telegram_message(message: str) -> bool:
         True when Telegram accepted the message, False when the configuration is missing or sending failed.
     """
     span = trace.get_current_span()
-    token = get_env("TELEGRAM_BOT_TOKEN")
-    chat_id = get_env("TELEGRAM_CHAT_ID")
+    credentials = telegram_credentials()
 
-    if not token or not chat_id:
-        _activity_logger.error(
-            "Missing Telegram configuration. Ensure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set."
-        )
+    if credentials is None:
+        # Reported once at startup; every report would repeat it.
+        _activity_logger.debug("Telegram is not configured; the report is not sent.")
         return False
 
-    url = f"{get_telegram_api_base()}/bot{token}/sendMessage"
+    url = f"{get_telegram_api_base()}/bot{credentials.bot_token}/sendMessage"
     payload: dict[str, Any] = {
-        "chat_id": chat_id,
+        "chat_id": credentials.chat_id,
         "text": message,
         "disable_web_page_preview": to_bool_env("TELEGRAM_DISABLE_WEB_PREVIEW", True),
         "disable_notification": to_bool_env("TELEGRAM_DISABLE_NOTIFICATION", False),
         "parse_mode": get_env("TELEGRAM_PARSE_MODE") or "HTML",
     }
 
-    _activity_logger.debug(f"Sending Telegram message to chat_id={chat_id}")
+    _activity_logger.debug("Sending Telegram message")
     try:
         response = requests.post(url, json=payload, timeout=_REQUEST_TIMEOUT_SECONDS)
     except requests.RequestException as exc:

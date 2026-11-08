@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -8,7 +9,32 @@ from src.data.base_repository import BaseRepository
 
 _log_levels = {"NOTSET": 0, "DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
+DB_LOG_LEVEL_SETTING = "ACTIVITY_DB_LOG_LEVEL"
+DEFAULT_DB_LOG_LEVEL = "DEBUG"
+
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def database_log_level(tracker_level: str) -> str:
+    """Return the lowest level a tracker writes to the ``activity_tracker`` table.
+
+    It is the higher of the tracker's own level and ``ACTIVITY_DB_LOG_LEVEL`` (default ``DEBUG``); OTEL logging is not
+    affected.
+
+    Args:
+        tracker_level: The tracker's own level name.
+
+    Returns:
+        A level name from ``NOTSET`` to ``CRITICAL``.
+
+    Raises:
+        ValueError: If ``ACTIVITY_DB_LOG_LEVEL`` is not one of those names.
+    """
+    configured = (os.environ.get(DB_LOG_LEVEL_SETTING) or DEFAULT_DB_LOG_LEVEL).strip().upper()
+    if configured not in _log_levels:
+        raise ValueError(f"{DB_LOG_LEVEL_SETTING} must be one of {', '.join(_log_levels)}.")
+    tracker = tracker_level.strip().upper()
+    return max(configured, tracker, key=lambda name: _log_levels.get(name, max(_log_levels.values())))
 
 
 class ActivityTracker(BaseRepository):
@@ -22,7 +48,7 @@ class ActivityTracker(BaseRepository):
             "ERROR": False,
             "CRITICAL": False,
         }
-        self._set_log_level(log_level)
+        self._set_log_level(database_log_level(log_level))
 
     def _set_log_level(self, log_level: str) -> None:
         target_level = log_level.upper().strip()
