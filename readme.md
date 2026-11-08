@@ -47,7 +47,7 @@ We have four major elements in this application:
 - [media identifier api](https://github.com/brenordv/media-identifier-api) 2.0 or newer.
 - An MQTT broker.
 - [Infisical](https://infisical.com/), holding this application's settings.
-- A 7-Zip binary (`7zz`) for RAR extraction. The Docker image ships 7-Zip 26.05.
+- A 7-Zip binary (`7zz`) for RAR extraction. The Docker image ships 7-Zip 26.06.
 
 #### Local prerequisites
 - [uv](https://docs.astral.sh/uv/) manages the dependencies and runs the app. It installs Python 3.14 (`.python-version`) when needed.

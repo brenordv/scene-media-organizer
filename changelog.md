@@ -34,7 +34,7 @@ Settings move to Infisical, the database schema is managed by migrations at star
 ### Changed
 - Media identifier 2.0 answers: 204, 400, 404 and 422 are final (`FAILED_ID`); 502, 503, 504 and network errors are retried with backoff and then left queued without using up an attempt (one warning per batch); a 500 or any other unexpected answer uses up an attempt, so the 5-attempt cap ends it instead of retrying it forever.
 - MQTT client moved to paho-mqtt's callback API version 2 (version 1 is deprecated).
-- 7-Zip in the image is 26.05 (fixes CVE-2026-14266, an XZ decompression heap overflow, and the 26.01 archive-handler CVEs).
+- 7-Zip in the image is 26.06 (fixes CVE-2026-14266, an XZ decompression heap overflow, and the 26.01 archive-handler CVEs).
 - Dependencies at their latest releases, including watchdog 7, Pillow 13, raccoontools 3.7, raccoontools-db 1.1, simple-log-factory-ext-otel 2.0 and infisicalsdk 1.3.
 - Lint, format and type checks run on ruff, ruff format and mypy (black and isort removed).
 - Work-queue queries name their columns; updates reject fields that are not columns.
