@@ -492,18 +492,78 @@ class WorkQueueManager(BaseRepository):
             _activity_tracker.error(error_message)
             raise RuntimeError(error_message) from e
 
-    @_activity_tracker.trace("WorkQueueManager.filter_only_existing_filenames")
-    def filter_only_existing_filenames(self, filenames: list[str]) -> list[str]:
+    @_activity_tracker.trace("WorkQueueManager.get_known_paths")
+    def get_known_paths(self, filenames: list[str]) -> list[tuple[str, str]]:
+        """Return the queue rows that have one of these file names.
+
+        Args:
+            filenames: The file names to look up.
+
+        Returns:
+            A (full_path, filename) tuple per row.
+
+        Raises:
+            RuntimeError: If the query fails.
+        """
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
                     _activity_tracker.debug(f"Checking the database for {len(filenames)} filename(s)")
-                    select_query = """SELECT distinct filename FROM work_queue WHERE filename = ANY(%s)"""
+                    select_query = """SELECT full_path, filename FROM work_queue WHERE filename = ANY(%s)"""
                     cursor.execute(select_query, (filenames,))
-                    rows = cursor.fetchall()
-                    return [row[0] for row in rows]
+                    return [(row[0], row[1]) for row in cursor.fetchall()]
         except psycopg.Error as e:
             error_message = f"Error checking database for filenames: {str(e)}"
+            _activity_tracker.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.find_done_items_by_hash")
+    def find_done_items_by_hash(self, content_hash: str) -> list[dict[str, Any]]:
+        """Return the finished items whose content has this hash.
+
+        Args:
+            content_hash: The SHA-256 to look for.
+
+        Returns:
+            The ``id``, ``target_path`` and ``filename`` of each item, oldest first.
+
+        Raises:
+            RuntimeError: If the query fails.
+        """
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    # The status is a literal so the query can use the partial index on DONE items.
+                    select_query = """SELECT id, target_path, filename FROM work_queue
+                                      WHERE content_hash = %s AND status = 'DONE'
+                                      ORDER BY created_at"""
+                    cursor.execute(select_query, (content_hash,))
+                    return [{"id": row[0], "target_path": row[1], "filename": row[2]} for row in cursor.fetchall()]
+        except psycopg.Error as e:
+            error_message = f"Error looking up content hash: {str(e)}"
+            _activity_tracker.error(error_message)
+            raise RuntimeError(error_message) from e
+
+    @_activity_tracker.trace("WorkQueueManager.get_done_items_without_hash")
+    def get_done_items_without_hash(self) -> list[dict[str, Any]]:
+        """Return every finished item that has no content hash.
+
+        Returns:
+            The work items, oldest first.
+
+        Raises:
+            RuntimeError: If the query fails.
+        """
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    select_query = f"""SELECT {_WORK_ITEM_SELECT} FROM work_queue
+                                       WHERE status = 'DONE' AND content_hash IS NULL
+                                       ORDER BY created_at"""
+                    cursor.execute(select_query)
+                    return [self._parse_work_item_row_to_object(row) for row in cursor.fetchall()]
+        except psycopg.Error as e:
+            error_message = f"Error reading items without a content hash: {str(e)}"
             _activity_tracker.error(error_message)
             raise RuntimeError(error_message) from e
 

@@ -4,6 +4,7 @@ from typing import Any
 import psycopg
 import pytest
 
+from src.data import work_queue_manager as manager_module
 from src.data.work_queue_manager import WorkQueueManager
 from tests.fakes import FakeDatabase
 
@@ -11,7 +12,7 @@ NOW = datetime.now(UTC)
 
 
 def _work_row(item_id: str = "item-1", status: str = "WORKING", attempts: int = 1) -> tuple[Any, ...]:
-    return (item_id, "/watch/a.mkv", "a.mkv", "/watch", None, status, False, False, NOW, NOW, None, attempts)
+    return (item_id, "/watch/a.mkv", "a.mkv", "/watch", None, status, False, False, NOW, NOW, None, attempts, None)
 
 
 @pytest.fixture
@@ -81,7 +82,7 @@ def test_get_next_batch_claims_pending_items_into_a_new_batch(manager: WorkQueue
     claim = _statements(fake_db, "UPDATE work_queue")[0][0]
     assert claim.endswith(
         "RETURNING id, full_path, filename, parent, target_path, status, is_archive, is_main_archive_file, "
-        "created_at, modified_at, media_info_cache_id, attempts"
+        "created_at, modified_at, media_info_cache_id, attempts, content_hash"
     )
     assert [item["id"] for item in batch] == ["item-1", "item-2"]
     assert batch_id is not None
@@ -160,8 +161,78 @@ def test_get_filed_items_database_error_raises_runtime_error(manager: WorkQueueM
         manager.get_filed_items()
 
 
-def test_filter_only_existing_filenames_returns_known_names(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
-    fake_db.queue_result([("a.mkv",)])
+def test_update_writes_only_the_fields_it_receives(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
+    manager.update({"id": "item-1", "content_hash": "abc123"})
 
-    assert manager.filter_only_existing_filenames(["a.mkv", "b.mkv"]) == ["a.mkv"]
-    assert fake_db.executed[-1][1] == (["a.mkv", "b.mkv"],)
+    query, params = _statements(fake_db, "UPDATE work_queue")[0]
+    assert query == "UPDATE work_queue SET content_hash = %s WHERE id = %s"
+    assert params == ["abc123", "item-1"]
+
+
+def test_get_known_paths_returns_path_and_name_of_each_row(manager: WorkQueueManager, fake_db: FakeDatabase) -> None:
+    fake_db.queue_result([("/watch/s1/a.mkv", "a.mkv"), ("/watch/s2/a.mkv", "a.mkv")])
+
+    rows = manager.get_known_paths(["a.mkv", "b.mkv"])
+
+    query, params = _statements(fake_db, "SELECT")[0]
+    assert rows == [("/watch/s1/a.mkv", "a.mkv"), ("/watch/s2/a.mkv", "a.mkv")]
+    assert query == "SELECT full_path, filename FROM work_queue WHERE filename = ANY(%s)"
+    assert params == (["a.mkv", "b.mkv"],)
+
+
+def test_get_known_paths_database_error_raises_runtime_error(
+    manager: WorkQueueManager, fake_db: FakeDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manager_module._activity_tracker, "debug", lambda activity: None)
+    fake_db.fail_with = psycopg.OperationalError("down")
+
+    with pytest.raises(RuntimeError, match="Error checking database for filenames"):
+        manager.get_known_paths(["a.mkv"])
+
+
+def test_find_done_items_by_hash_returns_matches_with_a_literal_status_for_the_partial_index(
+    manager: WorkQueueManager, fake_db: FakeDatabase
+) -> None:
+    fake_db.queue_result([("item-1", "/movies/A--2001", "a.mkv"), ("item-2", None, "a.rar")])
+
+    matches = manager.find_done_items_by_hash("abc123")
+
+    query, params = _statements(fake_db, "SELECT")[0]
+    assert matches == [
+        {"id": "item-1", "target_path": "/movies/A--2001", "filename": "a.mkv"},
+        {"id": "item-2", "target_path": None, "filename": "a.rar"},
+    ]
+    assert query == (
+        "SELECT id, target_path, filename FROM work_queue "
+        "WHERE content_hash = %s AND status = 'DONE' ORDER BY created_at"
+    )
+    assert params == ("abc123",)
+
+
+def test_find_done_items_by_hash_database_error_raises_runtime_error(
+    manager: WorkQueueManager, fake_db: FakeDatabase
+) -> None:
+    fake_db.fail_with = psycopg.OperationalError("down")
+
+    with pytest.raises(RuntimeError, match="Error looking up content hash"):
+        manager.find_done_items_by_hash("abc123")
+
+
+def test_get_done_items_without_hash_selects_only_done_rows_with_no_hash(
+    manager: WorkQueueManager, fake_db: FakeDatabase
+) -> None:
+    fake_db.queue_result([_work_row("item-1", status="DONE")])
+
+    items = manager.get_done_items_without_hash()
+
+    assert "WHERE status = 'DONE' AND content_hash IS NULL" in fake_db.queries()[0]
+    assert [item["id"] for item in items] == ["item-1"]
+
+
+def test_get_done_items_without_hash_database_error_raises_runtime_error(
+    manager: WorkQueueManager, fake_db: FakeDatabase
+) -> None:
+    fake_db.fail_with = psycopg.OperationalError("down")
+
+    with pytest.raises(RuntimeError, match="Error reading items without a content hash"):
+        manager.get_done_items_without_hash()

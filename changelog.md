@@ -11,6 +11,15 @@ Settings move to Infisical, the database schema is managed by migrations at star
 4. Rotate the Telegram bot token: 2.x could write it to the `activity_tracker` table, OTEL logs and traces when sending failed. Rows and telemetry that hold the old token stay readable until you delete or expire them (for example `DELETE FROM activity_tracker WHERE activity LIKE '%/bot%'`).
 5. Choose the user that owns your library and run the container as it (`--user "$(id -u):$(id -g)"` or compose `user:`). 2.x wrote as root, so give the library folders to that user once on the host: `chown -R UID:GID <library folder>`. It also needs read and write access to the watch folder (see readme, "Container").
 6. Optionally run `on_demand.py recheck` to find media filed from identifier 1.x answers that 2.0 would file elsewhere.
+7. Optionally, with the service stopped, run `on_demand.py backfill-hashes` from the new image before the first start (see readme, "Hashing items finished before content hashes existed"). Without it, an old file that shows up under a new name, or identified for another folder, is copied once more.
+8. Files already `PENDING` skip the new extension filter. To ignore the unwanted ones, run this once with the service stopped:
+   ```sql
+   UPDATE work_queue SET status = 'IGNORED'
+   WHERE status = 'PENDING' AND NOT is_archive
+     AND COALESCE(lower(substring(filename from '\.([^.]+)$')), '') NOT IN
+         ('mkv', 'mp4', 'avi', 'm4v', 'mov', 'ts', 'wmv', 'mpg', 'mpeg', 'webm', 'srt', 'ass', 'sub', 'idx');
+   ```
+9. The first start queues files that share a name with a tracked file in another folder. Those that would land on a different library file each send one `FAILED_CONFLICT` alert, so several can arrive at once.
 
 ### Breaking changes
 - Requires Python 3.14 (`.python-version`); the image is built on `python:3.14-slim`.
@@ -20,15 +29,20 @@ Settings move to Infisical, the database schema is managed by migrations at star
 - `TELEGRAM_API_BASE` must be an https URL.
 - Requires PostgreSQL 13 or newer.
 - The image runs as user `1000:1000` instead of root. `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` now needs `--user 0:0`; without root the service warns at startup.
+- Only video files, subtitles and archives are processed. Every other extension is queued as `IGNORED` with no alert, including `.m2ts`, `.iso`, `.vob`, `.divx`, `.flv`, `.ssa`, `.vtt` and `.tar`.
+- A library file is never overwritten: a different file with the same name ends as `FAILED_CONFLICT`.
 
 ### Added
-- `FAILED_PERMISSIONS`: a copy that hits a permission problem ends here without retrying and sends one Telegram alert naming the file, the item id and the error.
+- `FAILED_PERMISSIONS`: a file that cannot be read or copied because of a permission problem ends here without retrying and sends one Telegram alert naming the file, the item id and the error. That includes an unreadable archive.
+- `DUPLICATE`: a file with the same SHA-256 as an item already `DONE` is not processed, under any name and in any folder. It stays out of the batch report; one Telegram alert goes out only when the library copy is gone. New column `work_queue.content_hash` (migration `0004`).
+- `FAILED_CONFLICT`: a different file already has this file's name in its library folder. Nothing is written, and one Telegram alert names both paths.
+- `on_demand.py backfill-hashes`: saves the content hash of finished items that have none; can be run again to continue.
 - Startup database migrations (`migrations/`, ledger table `schema_migrations`, advisory lock so concurrent starts apply each file once). A fresh database is set up on the first start; existing tables are adopted unchanged.
 - `sql/create_app_role.sql` (new role and database) and `sql/grant_existing_database.sql` (dedicated role for an existing install).
 - `on_demand.py recheck`: re-identifies filed media and reports files the identifier would now file elsewhere; read-only.
 - Startup catch-up scan: the service queues files that arrived in the watch folder while it was down.
 - `ACTIVITY_DB_LOG_LEVEL` sets the lowest level written to the `activity_tracker` table (default `DEBUG`, as before).
-- Indexes on `work_queue(status)`, `work_queue(filename)`, `batch_control(batch_id, work_queue_id)` and open batches.
+- Indexes on `work_queue(status)`, `work_queue(filename)`, `work_queue(content_hash)` for `DONE` items, `batch_control(batch_id, work_queue_id)` and open batches.
 - `.env.example`, a QA workflow for pull requests to master (`.github/workflows/qa.yml`), and unit tests for every task, repository and the startup steps.
 
 ### Changed
@@ -39,6 +53,9 @@ Settings move to Infisical, the database schema is managed by migrations at star
 - Lint, format and type checks run on ruff, ruff format and mypy (black and isort removed).
 - Work-queue queries name their columns; updates reject fields that are not columns.
 - `FAILED_MAX_ATTEMPTS` is logged at error level.
+- The startup scan and `on_demand.py missing` compare files by path inside the watch folder, so a different file with a known name is queued. They log how many files were found, known, new, to process and ignored, and `missing` starts a batch only when there is something to process.
+- Copies are all-or-nothing: Python writes to a `.smo-partial-*` file and renames it, and rsync no longer keeps partial files, so an interrupted rsync copy restarts from the beginning.
+- Batch verification reads the source only when its hash is not stored.
 
 ### Fixed
 - The Telegram bot token no longer reaches logs, the activity table or traces: failures log the exception class only and the Telegram API is excluded from HTTP tracing.

@@ -1,12 +1,15 @@
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
 from opentelemetry import trace
 
 from src.utils import child_process_env, get_otel_log_handler, to_bool_env
+
+PARTIAL_COPY_PREFIX = ".smo-partial-"
 
 _logger = get_otel_log_handler("Copy File", unique_handler_types=True)
 
@@ -18,6 +21,9 @@ class CopyPermissionError(Exception):
 @_logger.trace("copy_file")
 def copy_file(src_file: str, dst_dir: str | Path) -> bool:
     """Copy a file into a directory, retrying up to five times with a growing delay.
+
+    The copy is all-or-nothing: a file with the final name is always a finished copy, and a failed attempt leaves
+    whatever was there untouched.
 
     Args:
         src_file: The file to copy.
@@ -93,8 +99,6 @@ def _copy_file(src_file: str, dst_file: Path, copy_using_rsync: bool) -> None:
             "-a",
             "--info=progress2",
             "--human-readable",
-            "--partial",
-            "--append-verify",
             "--stats",
             "--xattrs",
             "--acls",
@@ -121,7 +125,34 @@ def _copy_file(src_file: str, dst_file: Path, copy_using_rsync: bool) -> None:
                 raise Exception("Failed to copy file using rsync")
 
     else:
-        shutil.copy(src_file, dst_file)
+        _copy_through_temporary_file(src_file, dst_file)
+
+
+def _copy_through_temporary_file(src_file: str, dst_file: Path) -> None:
+    """Copy a file onto ``dst_file`` in one step, by writing a temporary file beside it and renaming that into place.
+
+    The temporary file has a short, exclusive name, so a symlink placed there beforehand is not followed and a long
+    file name still fits. Both names are in one folder, and so on one filesystem, which makes the rename atomic.
+
+    Args:
+        src_file: The file to copy.
+        dst_file: The final path, in a folder that exists.
+
+    Raises:
+        OSError: If a step fails; ``dst_file`` is left as it was.
+    """
+    descriptor, temporary_name = tempfile.mkstemp(dir=dst_file.parent, prefix=PARTIAL_COPY_PREFIX)
+    os.close(descriptor)
+    temporary_file = Path(temporary_name)
+    try:
+        shutil.copy(src_file, temporary_file)
+        os.replace(temporary_file, dst_file)
+    finally:
+        try:
+            temporary_file.unlink(missing_ok=True)
+        except OSError as e:
+            # Best-effort: nothing reuses an orphan, and raising here would replace the copy's own outcome.
+            _logger.warning(f"Could not remove the temporary file [{temporary_file}]: {e}")
 
 
 @_logger.trace("_change_destination_ownership")

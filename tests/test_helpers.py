@@ -6,14 +6,19 @@ import pytest
 
 from src.helpers import (
     Destination,
+    library_root_pairs,
+    locate_in_library,
     parse_work_item_row,
     partition_open_batches,
     resolve_destination,
     select_new_files,
+    watch_folder_roots,
 )
 
 MOVIES = Path("/movies")
 SERIES = Path("/series")
+WATCH = Path("/data/watch")
+WATCH_ROOTS = [WATCH, Path("/watch")]
 
 
 @pytest.mark.parametrize(
@@ -50,27 +55,130 @@ def test_resolve_destination_unusable_record_gives_a_reason(media_info: dict[str
     assert reason_fragment in destination.reason
 
 
-def test_select_new_files_partial_overlap() -> None:
-    files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
-    assert select_new_files(files_found, ["x.mkv"]) == ["/a/y.mkv"]
+def _found(relative_path: str) -> tuple[str, str, Path]:
+    relative = Path(relative_path)
+    return (str(WATCH / relative), relative.name, relative)
 
 
-def test_select_new_files_no_overlap() -> None:
-    files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
-    assert select_new_files(files_found, []) == ["/a/x.mkv", "/a/y.mkv"]
+def test_select_new_files_same_name_in_another_folder_is_new() -> None:
+    found = [_found("show.s01/episode.mkv"), _found("show.s02/episode.mkv")]
+    known_rows = [("/data/watch/show.s01/episode.mkv", "episode.mkv")]
+
+    new_files, fallback_rows = select_new_files(found, known_rows, WATCH_ROOTS)
+
+    assert new_files == [str(WATCH / "show.s02/episode.mkv")]
+    assert fallback_rows == 0
 
 
-def test_select_new_files_all_existing() -> None:
-    files_found = [("/a/x.mkv", "x.mkv"), ("/a/y.mkv", "y.mkv")]
-    assert select_new_files(files_found, ["x.mkv", "y.mkv"]) == []
+@pytest.mark.parametrize("stored_path", ["/watch/show/episode.mkv", "/data/watch/show/episode.mkv"])
+def test_select_new_files_same_path_is_known_in_container_and_local_form(stored_path: str) -> None:
+    new_files, fallback_rows = select_new_files(
+        [_found("show/episode.mkv")], [(stored_path, "episode.mkv")], WATCH_ROOTS
+    )
+
+    assert new_files == []
+    assert fallback_rows == 0
+
+
+def test_select_new_files_row_outside_every_root_falls_back_to_the_name() -> None:
+    found = [_found("show/episode.mkv"), _found("show/other.mkv")]
+    known_rows = [("/old-mount/show/episode.mkv", "episode.mkv")]
+
+    new_files, fallback_rows = select_new_files(found, known_rows, WATCH_ROOTS)
+
+    assert new_files == [str(WATCH / "show/other.mkv")]
+    assert fallback_rows == 1
+
+
+def test_select_new_files_root_is_compared_by_segment() -> None:
+    known_rows = [("/watch-old/show/episode.mkv", "episode.mkv")]
+
+    new_files, fallback_rows = select_new_files([_found("show/episode.mkv")], known_rows, WATCH_ROOTS)
+
+    assert new_files == []
+    assert fallback_rows == 1
+
+
+def test_select_new_files_nothing_known_returns_every_file() -> None:
+    found = [_found("a.mkv"), _found("b.mkv")]
+
+    assert select_new_files(found, [], WATCH_ROOTS) == ([str(WATCH / "a.mkv"), str(WATCH / "b.mkv")], 0)
 
 
 def test_select_new_files_empty_inputs() -> None:
-    assert select_new_files([], []) == []
-    assert select_new_files([], ["x.mkv"]) == []
+    assert select_new_files([], [], WATCH_ROOTS) == ([], 0)
 
 
-def test_parse_work_item_row_maps_twelve_columns_including_attempts() -> None:
+def test_watch_folder_roots_holds_the_resolved_and_raw_folder_and_the_container_path(tmp_path: Path) -> None:
+    assert watch_folder_roots(tmp_path) == [tmp_path.resolve(), tmp_path, Path("/watch")]
+
+
+@pytest.fixture
+def library_behind_a_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: tmp_path / "real-disk" / self.name)
+    return tmp_path / "movies"
+
+
+def test_library_root_pairs_rebases_a_resolved_target_onto_the_configured_folder(
+    tmp_path: Path, library_behind_a_symlink: Path
+) -> None:
+    stored = str(tmp_path / "real-disk" / "movies" / "Heat--1995")
+
+    root_pairs = library_root_pairs(library_behind_a_symlink, tmp_path / "series")
+
+    assert locate_in_library(stored, root_pairs) == library_behind_a_symlink / "Heat--1995"
+
+
+def test_library_root_pairs_rebases_an_absolute_target_onto_the_configured_folder(
+    tmp_path: Path, library_behind_a_symlink: Path
+) -> None:
+    stored = str(library_behind_a_symlink / "Heat--1995")
+
+    root_pairs = library_root_pairs(library_behind_a_symlink, tmp_path / "series")
+
+    assert locate_in_library(stored, root_pairs) == library_behind_a_symlink / "Heat--1995"
+
+
+def test_library_root_pairs_rebases_the_absolute_target_of_a_relative_folder() -> None:
+    movies = Path("relative-library/movies")
+    stored = str(movies.absolute() / "Heat--1995")
+
+    assert locate_in_library(stored, library_root_pairs(movies, Path("relative-library/series"))) == (
+        movies / "Heat--1995"
+    )
+
+
+@pytest.mark.parametrize(
+    ("stored_path", "expected"),
+    [
+        ("/movies/Heat--1995", "movies/Heat--1995"),
+        ("/series/Slow-Horses/Season01", "series/Slow-Horses/Season01"),
+        ("/series/Movies-That-Made-Us/Season01", "series/Movies-That-Made-Us/Season01"),
+    ],
+)
+def test_locate_in_library_rebases_a_container_path_onto_its_configured_folder(
+    tmp_path: Path, stored_path: str, expected: str
+) -> None:
+    root_pairs = library_root_pairs(tmp_path / "movies", tmp_path / "series")
+
+    assert locate_in_library(stored_path, root_pairs) == tmp_path / expected
+
+
+@pytest.mark.parametrize("relative", ["movies/Heat--1995", "series/Slow-Horses/Season01"])
+def test_locate_in_library_keeps_a_path_already_under_the_configured_folder(tmp_path: Path, relative: str) -> None:
+    root_pairs = library_root_pairs(tmp_path / "movies", tmp_path / "series")
+
+    assert locate_in_library(str(tmp_path / relative), root_pairs) == tmp_path / relative
+
+
+@pytest.mark.parametrize("stored_path", ["/elsewhere/Heat--1995", "/moviesfolder/Heat--1995"])
+def test_locate_in_library_path_outside_every_root_returns_none(tmp_path: Path, stored_path: str) -> None:
+    root_pairs = library_root_pairs(tmp_path / "movies", tmp_path / "series")
+
+    assert locate_in_library(stored_path, root_pairs) is None
+
+
+def test_parse_work_item_row_maps_every_column_including_the_content_hash() -> None:
     row = (
         "id-1",
         "/a/x.mkv",
@@ -84,6 +192,7 @@ def test_parse_work_item_row_maps_twelve_columns_including_attempts() -> None:
         "2026-01-02",
         "cache-1",
         3,
+        "abc123",
     )
     assert parse_work_item_row(row) == {
         "id": "id-1",
@@ -98,6 +207,7 @@ def test_parse_work_item_row_maps_twelve_columns_including_attempts() -> None:
         "modified_at": "2026-01-02",
         "media_info_cache_id": "cache-1",
         "attempts": 3,
+        "content_hash": "abc123",
     }
 
 

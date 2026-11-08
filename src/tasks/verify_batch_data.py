@@ -74,7 +74,7 @@ def verify_batch_data(batch_id: Any, batch_data: list[dict[str, Any]]) -> tuple[
             continue
 
         try:
-            src_hash = _sha256(src_path)
+            src_hash = item.get("content_hash") or _sha256(src_path)
             dst_hash = _sha256(dst_path)
         except Exception as exc:
             _activity_logger.error(

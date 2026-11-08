@@ -118,7 +118,20 @@ def migrations_dir(tmp_path: Path) -> Path:
 def test_repository_migrations_are_discovered_in_order() -> None:
     labels = [migration.label for migration in discover_migrations(MIGRATIONS_DIR)]
 
-    assert labels == ["0001_baseline", "0002_uuid_defaults_without_extension", "0003_work_queue_indexes"]
+    assert labels == [
+        "0001_baseline",
+        "0002_uuid_defaults_without_extension",
+        "0003_work_queue_indexes",
+        "0004_work_queue_content_hash",
+    ]
+
+
+def test_content_hash_index_covers_done_items_and_allows_duplicates() -> None:
+    migration = (MIGRATIONS_DIR / "0004_work_queue_content_hash.sql").read_text(encoding="utf-8")
+
+    assert "ALTER TABLE work_queue ADD COLUMN IF NOT EXISTS content_hash TEXT NULL;" in migration
+    assert "ON work_queue (content_hash) WHERE status = 'DONE';" in migration
+    assert "UNIQUE" not in migration
 
 
 def test_baseline_creates_the_tables_the_code_queries_without_an_extension() -> None:
