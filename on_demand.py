@@ -10,10 +10,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run scene-media-organizer maintenance commands.")
     parser.add_argument(
         "command",
-        choices=["batch", "missing", "recheck"],
+        choices=["batch", "missing", "recheck", "backfill-hashes"],
         help="batch: process all pending items. "
         "missing: queue files present on disk but absent from the queue, then process. "
-        "recheck: identify filed media again and report files that would now be filed elsewhere (read-only).",
+        "recheck: identify filed media again and report files that would now be filed elsewhere (read-only). "
+        "backfill-hashes: save the content hash of finished items that have none, so their files count as duplicates.",
     )
     parser.add_argument(
         "-y", "--yes", action="store_true", help="Skip the confirmation prompt (for non-interactive runs)."
@@ -39,10 +40,12 @@ init_pool()
 
 # Imports below this line intentionally run after the pool exists, because
 # these modules build repositories at import time.
+from src.backfill import run_backfill
 from src.batch_processor import process_batch
-from src.catch_up import queue_untracked_files
+from src.catch_up import log_scan_counts, queue_untracked_files
 from src.data.activity_logger import ActivityTracker
 from src.data.work_queue_manager import WorkQueueManager
+from src.helpers import library_root_pairs, watch_folder_roots
 from src.recheck import run_recheck
 from src.tasks.identify_file import identify_file
 
@@ -126,12 +129,12 @@ def on_demand_process_missing_add() -> None:
     tag = "[MISSING]"
 
     _activity_tracker.info(f"{tag} Reading watch folder recursively...")
-    queued = queue_untracked_files(Path(_watch_folder))
-    if queued == 0:
-        _activity_tracker.info(f"{tag} No new files found to add to the queue.")
+    counts = queue_untracked_files(Path(_watch_folder))
+    log_scan_counts(counts, _activity_tracker)
+    if counts.pending == 0:
+        _activity_tracker.info(f"{tag} No new files to process.")
         return
 
-    _activity_tracker.info(f"{tag} Added {queued} new file(s) to the queue.")
     on_demand_batch()
 
 
@@ -146,10 +149,23 @@ def on_demand_recheck() -> int:
     )
 
 
+def on_demand_backfill() -> int:
+    """Save the content hash of finished items that have none. Returns the exit code."""
+    watch_folder = Path(_watch_folder)
+    return run_backfill(
+        _work_queue_manager.get_done_items_without_hash(),
+        _work_queue_manager.update,
+        library_root_pairs(Path(_movies_base_folder), Path(_series_base_folder)),
+        [(root, watch_folder) for root in watch_folder_roots(watch_folder)],
+    )
+
+
 def main() -> int:
     command = _args.command
     if command == "recheck":
         return on_demand_recheck()
+    if command == "backfill-hashes":
+        return on_demand_backfill()
 
     if not _args.yes:
         print("\nATTENTION: It is advisable to stop the container service before running this command!")

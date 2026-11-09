@@ -27,6 +27,7 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         ("release.rar", "PENDING", True, True),
         ("release.r00", "IGNORED", True, False),
         ("install.sh", "IGNORED", False, False),
+        ("Some.Game.nes", "IGNORED", False, False),
     ],
 )
 def test_prepare_file_for_processing_sets_status_from_file_kind(
@@ -35,8 +36,9 @@ def test_prepare_file_for_processing_sets_status_from_file_kind(
     path = tmp_path / name
     path.write_bytes(b"content")
 
-    prepare_file_for_processing(str(path))
+    returned_status = prepare_file_for_processing(str(path))
 
+    assert returned_status == status
     assert queued[0]["status"] == status
     assert queued[0]["is_archive"] is is_archive
     assert queued[0]["is_main_archive_file"] is is_main

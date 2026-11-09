@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from src.tasks import copy_file as copy_file_module
-from src.tasks.copy_file import CopyPermissionError, copy_file
+from src.tasks.copy_file import PARTIAL_COPY_PREFIX, CopyPermissionError, copy_file
 
 
 @pytest.fixture(autouse=True)
@@ -105,6 +105,115 @@ def test_copy_file_denied_ownership_change_raises(tmp_path: Path, monkeypatch: p
         copy_file(str(source), tmp_path / "library")
 
 
+def _partial_files(folder: Path) -> list[Path]:
+    return list(folder.glob(f"{PARTIAL_COPY_PREFIX}*"))
+
+
+def test_copy_file_success_leaves_no_temporary_file_and_logs_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    library = tmp_path / "library"
+    warnings: list[str] = []
+    monkeypatch.setattr(copy_file_module._logger, "warning", warnings.append)
+
+    assert copy_file(str(source), library) is True
+    assert [path.name for path in library.iterdir()] == ["movie.mkv"]
+    assert warnings == []
+
+
+def test_copy_file_failed_copy_keeps_the_existing_file_and_removes_the_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"new content")
+    library = tmp_path / "library"
+    library.mkdir()
+    (library / "movie.mkv").write_bytes(b"existing content")
+    real_copy = shutil.copy
+
+    def copy_then_fail(src: str, dst: Path) -> None:
+        real_copy(src, dst)
+        raise OSError("disk full")
+
+    monkeypatch.setattr("shutil.copy", copy_then_fail)
+
+    assert copy_file(str(source), library) is False
+    assert (library / "movie.mkv").read_bytes() == b"existing content"
+    assert _partial_files(library) == []
+
+
+def test_copy_file_interrupted_by_a_failed_rename_keeps_the_existing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"new content")
+    library = tmp_path / "library"
+    library.mkdir()
+    (library / "movie.mkv").write_bytes(b"existing content")
+
+    def failing_replace(src: Path, dst: Path) -> None:
+        raise OSError("cross-device link")
+
+    monkeypatch.setattr("os.replace", failing_replace)
+
+    assert copy_file(str(source), library) is False
+    assert (library / "movie.mkv").read_bytes() == b"existing content"
+    assert _partial_files(library) == []
+
+
+def test_copy_file_keeps_the_source_mode_on_the_copy(tmp_path: Path) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    source.chmod(0o444)
+    library = tmp_path / "library"
+
+    assert copy_file(str(source), library) is True
+    assert (library / "movie.mkv").stat().st_mode == source.stat().st_mode
+
+
+def test_copy_file_temporary_file_cleanup_failure_keeps_the_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    warnings: list[str] = []
+    monkeypatch.setattr(copy_file_module._logger, "warning", warnings.append)
+
+    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
+        raise OSError("share went away")
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    assert copy_file(str(source), tmp_path / "library") is True
+    assert (tmp_path / "library" / "movie.mkv").read_bytes() == b"video"
+    assert len(warnings) == 1
+    assert "Could not remove the temporary file" in warnings[0]
+
+
+def test_copy_file_250_byte_filename_copies(tmp_path: Path) -> None:
+    source = tmp_path / f"{'x' * 246}.mkv"
+    source.write_bytes(b"video")
+    library = tmp_path / "library"
+
+    assert copy_file(str(source), library) is True
+    assert (library / source.name).read_bytes() == b"video"
+
+
+def test_copy_file_denied_temporary_file_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+
+    def denied_mkstemp(dir: Path, prefix: str) -> tuple[int, str]:
+        raise PermissionError(13, "Permission denied", str(dir))
+
+    monkeypatch.setattr("tempfile.mkstemp", denied_mkstemp)
+
+    with pytest.raises(CopyPermissionError, match="Permission denied"):
+        copy_file(str(source), tmp_path / "library")
+
+
 class _FakeRsync:
     def __init__(self, exit_code: int, output: str = "sending incremental file list\n") -> None:
         self.stdout = io.StringIO(output)
@@ -139,6 +248,23 @@ def test_copy_file_rsync_runs_without_credentials_in_environment(
     assert calls[0]["command"][0] == "rsync"
     assert calls[0]["command"][-1] == str(tmp_path / "library" / "movie.mkv")
     assert "INFISICAL_MEDIA_ORGANIZER_CLIENT_SECRET" not in calls[0]["env"]
+
+
+def test_copy_file_rsync_does_not_keep_partial_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "movie.mkv"
+    source.write_bytes(b"video")
+    monkeypatch.setenv("WATCHDOG_COPY_USING_RSYNC", "true")
+    commands: list[list[str]] = []
+
+    def fake_popen(command: list[str], **kwargs: Any) -> _FakeRsync:
+        commands.append(command)
+        return _FakeRsync(0)
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    assert copy_file(str(source), tmp_path / "library") is True
+    assert "--partial" not in commands[0]
+    assert "--append-verify" not in commands[0]
 
 
 def test_copy_file_rsync_failure_returns_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

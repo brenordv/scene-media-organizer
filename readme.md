@@ -4,8 +4,8 @@ A Python-based file monitoring and media organization system that automatically 
 organizing them into structured directories based on media metadata.
 
 ### Request flow
-The chart below shows a simplified, happy-path request flow.
-![Data flow chart](data-flow.png)
+The chart below shows, in plain language, what happens to a new file. It leaves out retries and permission problems, which "Item statuses" covers.
+![What happens to a new file](data-flow.png)
 
 ## How does it work?
 We have four major elements in this application:
@@ -16,20 +16,21 @@ We have four major elements in this application:
 
 ### File Processing
 - Files created under `WATCH_FOLDER` are detected by a watchdog observer (`main.py`).
-- When the service starts, it also queues every file already in `WATCH_FOLDER` that the work queue has never seen, so files that arrived while it was down are not missed.
+- When the service starts, it also queues every file in `WATCH_FOLDER` whose path the work queue does not track, so files that arrived while it was down are not missed. Paths are compared relative to the watch folder, so `/watch/...` and local paths match. A queue row whose path fits neither is matched by file name instead, and the scan logs a warning with the count.
 - Each file event is enqueued in memory and normalized (`src/queue_worker.py`):
   - Directories are ignored.
   - Archives are detected, and only the main/first volume is considered (multipart volumes are ignored: we just need the main file to decompress it).
-  - Files named like "sample" or executables are ignored.
+  - Only video files (`mkv`, `mp4`, `avi`, `m4v`, `mov`, `ts`, `wmv`, `mpg`, `mpeg`, `webm`), subtitles (`srt`, `ass`, `sub`, `idx`) and archives go on. Anything else, and any file named like "sample", is queued as `IGNORED`. The check reads the name only, so a ROM renamed `.mp4` still passes.
   - Remaining items are persisted to the Postgres-backed work queue as `PENDING` via `WorkQueueManager`.
 - The batch processor (`src/batch_processor.py`) continuously fetches the next batch and processes each item:
   - Wait until the file is stable (size unchanged for a short period).
   - Identify media via the [media identifier API](https://github.com/brenordv/media-identifier-api) (2.0 or newer). See "Media identifier answers" below.
-  - If the item is an archive, it is decompressed in place (supports 7z/rar/zip/tar/gz/bz2/xz); then the item is marked `DONE`. The new file will be processed in the next batch automatically.
+  - Hash the file (SHA-256). When an item already `DONE` has the same content, under any name and in any folder, this item ends as `DUPLICATE`. See "Duplicates and conflicts" below.
+  - If the item is an archive, it is decompressed in place (supports 7z/rar/zip/tar.gz/tar.bz2/tar.xz/gz/bz2/xz); then the item is marked `DONE`. The new file will be processed in the next batch automatically.
   - If it is a video file, the destination is resolved from metadata:
     - Movies → `MOVIES_BASE_FOLDER/<Title>--<Year>` (year optional)
     - TV → `SERIES_BASE_FOLDER/<Title>/SeasonXX` (season 0 holds specials)
-  - The file is copied to the destination; on success the item is marked `DONE`, otherwise it will be retried once.
+  - The file is copied to the destination, unless a file with its name is already there (see "Duplicates and conflicts"); on success the item is marked `DONE`, otherwise it will be retried once.
   - At the end of the batch, any straggling `WORKING` items are moved back to `PENDING`, so we can give it one more try, the batch is closed, and a verification step compares source/destination (size and SHA-256) for `DONE` items.
   - A completion payload (items, verification result and details) is published to MQTT for notifications.
 
@@ -117,7 +118,7 @@ The 2.x flags for Postgres, the API URL, the MQTT host, port and login, and Tele
 - `TELEGRAM_DISABLE_WEB_PREVIEW` - Defaults to `true` when unset (the image sets `false`).
 - `TELEGRAM_DISABLE_NOTIFICATION` - Defaults to `false`.
 - `WATCHDOG_CHANGE_DEST_OWNERSHIP_ON_COPY` - Defaults to `false`. Copies get the source file's owner; only for a container run as root (see "Container").
-- `WATCHDOG_COPY_USING_RSYNC` - Defaults to `false` (copies with Python).
+- `WATCHDOG_COPY_USING_RSYNC` - Defaults to `false` (copies with Python). An interrupted rsync copy restarts from the beginning.
 - `MQTT_LOG_LEVEL`, `MQTT_TLS_CA_CERT`, `MQTT_KEEPALIVE_SECONDS` - MQTT client tuning.
 
 ## Database
@@ -179,7 +180,8 @@ Terminal failure statuses an item can land on:
 - `FAILED_ID` - the identifier returned no usable metadata.
 - `FAILED_MISSING` - the source file vanished before it could be processed.
 - `FAILED_MAX_ATTEMPTS` - the item failed 5 processing attempts. Transient conditions (identifier unavailable, file still being written) refund the attempt, so only genuine repeated failures reach the cap.
-- `FAILED_PERMISSIONS` - a copy hit a permission problem: an unreadable source, an unwritable library folder, or an ownership change without root. It is not retried, and one Telegram alert names the file, the item id and the error. With the ownership option the file may already be in the library.
+- `FAILED_PERMISSIONS` - a permission problem while reading or copying the file: an unreadable source (an archive too, since hashing reads it first), a library folder the user cannot read or write, or an ownership change without root. It is not retried, and one Telegram alert names the file, the item id and the error. With the ownership option the file may already be in the library.
+- `FAILED_CONFLICT` - a different file already has this file's name in its library folder. Nothing is written, and one Telegram alert names both paths. See "Duplicates and conflicts".
 
 All of them appear in the batch's Telegram report. To re-queue an item, set `status = 'PENDING', attempts = 0` on its `work_queue` row:
 
@@ -187,9 +189,37 @@ All of them appear in the batch's Telegram report. To re-queue an item, set `sta
 UPDATE work_queue SET status = 'PENDING', attempts = 0 WHERE id = '<item id>';
 ```
 
-A re-queued item that fails on permissions again sends a new alert. Archives that cannot be read or extracted send no alert: they use up their attempts and end as `FAILED_MAX_ATTEMPTS`.
+A re-queued item that fails on permissions again sends a new alert. Archives that cannot be extracted send no alert: they use up their attempts and end as `FAILED_MAX_ATTEMPTS`.
+
+`DUPLICATE` is also terminal, but it is not a failure, and re-queueing one alone only makes it a duplicate again. See "Duplicates and conflicts".
 
 One exception to the report: `on_demand.py` sweeps orphaned `WORKING` items (left by an earlier crash) back to pending before it builds a batch, and any it caps there are logged to the console only, not to Telegram. The in-batch cap during normal processing does reach the Telegram report.
+
+### Duplicates and conflicts
+
+`DUPLICATE` is a terminal status and not a failure: the file has the same content as an item already `DONE`, so it is not copied or extracted, even when the library copy is gone. Duplicates stay out of the batch report, and a batch of nothing but duplicates sends no report.
+
+One Telegram alert goes out when the library file is gone for every earlier item with that content. An unmounted library folder also reads as gone, so this alert can be a false one. When a library file cannot be checked, or the earlier item's folder is outside the configured library folders, the service logs a warning and sends no alert.
+
+Empty files are not hashed, so they never count as duplicates. A subtitle identical to an earlier one is not copied next to a second release of the video, and a multi-volume archive is compared by its main volume only.
+
+To force a copy of a duplicate, clear the hash on the earlier items and re-queue it:
+
+```sql
+UPDATE work_queue SET content_hash = NULL
+WHERE status = 'DONE' AND content_hash = (SELECT content_hash FROM work_queue WHERE id = '<duplicate item id>');
+UPDATE work_queue SET status = 'PENDING', attempts = 0 WHERE id = '<duplicate item id>';
+```
+
+A library file is never replaced. When a file with the same name is already in the destination folder, an identical file finishes the item as `DONE` with nothing to copy, and anything else ends it as `FAILED_CONFLICT`. To replace a library file, delete or move it, then re-queue the item. A `DONE` item with a damaged library copy takes the same route.
+
+Copies are all-or-nothing, so a file with the final name is always a finished copy. Python writes to a `.smo-partial-*` file in the destination folder and renames it when complete; a hard kill can leave one behind, and it is safe to delete. rsync does the same with its own temporary name.
+
+### Hashing items finished before content hashes existed
+
+Items finished before content hashes were recorded have none, so a later copy of their file is not seen as a duplicate. `on_demand.py backfill-hashes` hashes each one, from its library copy or else its source, and saves the result. It is optional. Without it, an old file that shows up under a new name, or identified for another folder, is copied once more.
+
+Stop the service first. The command needs no confirmation, prints a line per item and the final counts (hashed, gone, unreadable), and can be run again to continue after an interruption. It exits 1 when an item could not be read. That includes a stored path outside the configured folders, so a moved mount reports as unreadable and not as gone: fix the mount and run it again.
 
 ### Resumable maintenance runs
 
@@ -223,7 +253,7 @@ That user needs:
 
 - Read access to the source files. A file another user owns is fine if it is readable, for example mode `644`, or `640` with the user in its group (`--group-add` or `group_add`). A mode like `600` ends as `FAILED_PERMISSIONS`. So does a library folder the user cannot write to. A file inside a folder the user cannot enter looks like it is gone and ends as `FAILED_MISSING`.
 - Read and write access to the watch folder, because archives are extracted next to themselves.
-- Write access to the movie and series libraries.
+- Read and write access to the movie and series libraries.
 
 Have your downloader write files this user can read, by running as the same user or in its group with a umask like `002` or `022`.
 
@@ -249,8 +279,9 @@ For maintenance runs:
 uv run python on_demand.py batch      # process everything already pending
 uv run python on_demand.py missing    # queue on-disk files not yet tracked, then process
 uv run python on_demand.py recheck    # report filed media the identifier would now file elsewhere
+uv run python on_demand.py backfill-hashes    # save the content hash of finished items that have none
 ```
-Add `--yes` to skip the confirmation prompt in non-interactive runs (`recheck` never asks).
+Add `--yes` to skip the confirmation prompt in non-interactive runs (`recheck` and `backfill-hashes` never ask).
 
 A batch run with the folders given as flags; the bootstrap comes from the environment or `.env`:
 

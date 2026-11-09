@@ -9,8 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from opentelemetry import context, trace
 
-from tests.fakes import FAKE_DATABASE, TEST_SECRETS, FakeDatabase, fake_get_pool
+from tests.fakes import FAKE_DATABASE, TEST_SECRETS, FakeDatabase, RecordingSpan, fake_get_pool
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -48,6 +49,15 @@ def fake_db() -> Iterator[FakeDatabase]:
     FAKE_DATABASE.reset()
     yield FAKE_DATABASE
     FAKE_DATABASE.reset()
+
+
+@pytest.fixture
+def recording_span() -> Iterator[RecordingSpan]:
+    """Make a span that keeps its attributes the current span for the test."""
+    span = RecordingSpan()
+    token = context.attach(trace.set_span_in_context(span))
+    yield span
+    context.detach(token)
 
 
 @pytest.fixture(autouse=True)

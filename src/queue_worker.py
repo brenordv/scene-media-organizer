@@ -43,14 +43,22 @@ def queue_consumer() -> None:
 
 
 @_activity_tracker.trace("prepare_file_for_processing")
-def prepare_file_for_processing(filename: str) -> None:
+def prepare_file_for_processing(filename: str) -> str:
+    """Add a file to the work queue: ``PENDING`` when it is wanted, ``IGNORED`` when it is not.
+
+    Args:
+        filename: The file's full path.
+
+    Returns:
+        The status the file was queued with.
+    """
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("file.path", str(filename))
 
     is_archive = is_compressed_file(filename)
     main_archive_file = is_main_archive_file(filename) if is_archive else False
-    should_copy_file = check_should_copy_file(filename)
+    should_copy_file = check_should_copy_file(filename, is_archive)
     status = "IGNORED" if (is_archive and not main_archive_file) or not should_copy_file else "PENDING"
     path = Path(filename)
 
@@ -78,3 +86,4 @@ def prepare_file_for_processing(filename: str) -> None:
     _activity_tracker.info(
         f"[QUEUE CONSUMER] Added file [{filename}] to queue with status [{status}], and ID [{new_queue_item_id}]"
     )
+    return status

@@ -1,10 +1,11 @@
-"""Test doubles: a PostgreSQL pool that records statements and answers from a queue, and a recording logger."""
+"""Test doubles: a PostgreSQL pool that records statements and answers from a queue, a recording logger and span."""
 
 from collections import deque
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
 
+from opentelemetry import trace
 from simple_log_factory_ext_otel import TracedLogger
 
 
@@ -37,6 +38,30 @@ class RecordingLogger:
 def as_traced(logger: RecordingLogger) -> TracedLogger:
     """Hand a :class:`RecordingLogger` to code typed for a ``TracedLogger``."""
     return cast(TracedLogger, logger)
+
+
+class RecordingSpan(trace.NonRecordingSpan):
+    """A span that keeps every attribute set on it.
+
+    It extends ``NonRecordingSpan`` because the no-op tracer, which is all the suite has with the SDK disabled, keeps a
+    current span of that type active instead of replacing it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(trace.INVALID_SPAN_CONTEXT)
+        self.attributes: dict[str, Any] = {}
+
+    def is_recording(self) -> bool:
+        """Report that attributes are wanted."""
+        return True
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        """Keep one attribute."""
+        self.attributes[key] = value
+
+    def set_attributes(self, attributes: Mapping[str, Any]) -> None:
+        """Keep several attributes."""
+        self.attributes.update(attributes)
 
 
 Row = tuple[Any, ...]
