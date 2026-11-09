@@ -4,8 +4,8 @@ A Python-based file monitoring and media organization system that automatically 
 organizing them into structured directories based on media metadata.
 
 ### Request flow
-The chart below shows a simplified, happy-path request flow.
-![Data flow chart](data-flow.png)
+The chart below shows, in plain language, what happens to a new file. It leaves out retries and permission problems, which "Item statuses" covers.
+![What happens to a new file](data-flow.png)
 
 ## How does it work?
 We have four major elements in this application:
